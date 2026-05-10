@@ -36,6 +36,9 @@ export function Step4Account({
           <label className="block text-sm font-medium mb-1">
             Instagram ハンドル <span className="text-red-500">*</span>
           </label>
+          <p className="text-xs text-gray-500 mb-2">
+            名刺に載せるInstagramの情報をご記入ください
+          </p>
           <div className="flex items-center">
             <span className="px-3 py-2 bg-gray-100 border border-r-0 border-gray-300 rounded-l text-gray-500">
               @
@@ -46,7 +49,7 @@ export function Step4Account({
               onChange={(e) =>
                 update("ig_handle", e.target.value.replace(/^@+/, ""))
               }
-              placeholder="kotetsutokotatsu"
+              placeholder="peco_channel"
               autoCapitalize="none"
               autoCorrect="off"
               className="flex-1 px-3 py-2 rounded-r border border-gray-300 focus:border-[#2D6A4F] focus:outline-none"
@@ -56,13 +59,13 @@ export function Step4Account({
 
         <div>
           <label className="block text-sm font-medium mb-1">
-            IG NAME <span className="text-red-500">*</span>
+            Instagramのアカウント名 <span className="text-red-500">*</span>
           </label>
           <input
             type="text"
             value={igName}
             onChange={(e) => update("ig_name", e.target.value)}
-            placeholder="例: YUKO"
+            placeholder="例: ペコ★トイプードル"
             className="w-full px-3 py-2 rounded border border-gray-300 focus:border-[#2D6A4F] focus:outline-none"
           />
         </div>
@@ -71,6 +74,9 @@ export function Step4Account({
           <label className="block text-sm font-medium mb-1">
             オーナー名 <span className="text-gray-400 text-xs">（任意）</span>
           </label>
+          <p className="text-xs text-gray-500 mb-2">
+            名刺のowner表記を非表示にしたい場合は空欄でOK
+          </p>
           <input
             type="text"
             value={ownerName}
