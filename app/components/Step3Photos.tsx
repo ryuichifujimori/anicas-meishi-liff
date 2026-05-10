@@ -1,14 +1,20 @@
 "use client";
 
-import { useRef, useState } from "react";
-import type { PetPhoto, PhotoTransform } from "@/lib/types";
+import { useEffect, useRef, useState } from "react";
+import type { Pet, PetPhoto, PhotoTransform } from "@/lib/types";
 import { loadAndNormalizeImage } from "@/lib/image";
 import { PhotoComposer } from "./PhotoComposer";
+import { MeishiPreview } from "./MeishiPreview";
 
 type Props = {
   petCount: 1 | 2 | 3;
+  pets: Pet[];
   photos: (PetPhoto | null)[];
   transforms: PhotoTransform[];
+  composedPhoto: string | null;
+  igHandle: string;
+  igName: string;
+  ownerName: string;
   onPhotosChange: (photos: (PetPhoto | null)[]) => void;
   onTransformsChange: (t: PhotoTransform[]) => void;
   onComposed: (dataUrl: string) => void;
@@ -18,8 +24,13 @@ type Props = {
 
 export function Step3Photos({
   petCount,
+  pets,
   photos,
   transforms,
+  composedPhoto,
+  igHandle,
+  igName,
+  ownerName,
   onPhotosChange,
   onTransformsChange,
   onComposed,
@@ -47,16 +58,29 @@ export function Step3Photos({
     }
   };
 
-  const allUploaded = photos.slice(0, petCount).every((p) => p !== null);
-  const validPhotos = photos.slice(0, petCount).filter((p): p is PetPhoto => p !== null);
+  const validPhotos = photos
+    .slice(0, petCount)
+    .filter((p): p is PetPhoto => p !== null);
+  const photoCount = validPhotos.length;
+  const hasAny = photoCount >= 1;
+  const isMulti = photoCount >= 2;
 
-  const single = petCount === 1;
+  // Single photo: skip composer and emit the photo data URL directly.
+  // (For multi, PhotoComposer drives onComposed itself.)
+  useEffect(() => {
+    if (photoCount === 1) {
+      onComposed(validPhotos[0].dataUrl);
+    }
+    // onComposed is referentially unstable from the parent setter; avoid
+    // depending on it to prevent a render loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [photoCount, validPhotos[0]?.dataUrl]);
 
   return (
     <div className="space-y-5">
       <h2 className="text-xl font-bold text-center">写真をアップロード</h2>
       <p className="text-sm text-gray-600 text-center">
-        HEIC/HEIF も自動でJPEGに変換されます。
+        HEIC/HEIF も自動でJPEGに変換されます。1枚以上アップロードしてください。
       </p>
 
       <div className="grid grid-cols-3 gap-3">
@@ -95,31 +119,33 @@ export function Step3Photos({
 
       {error && <div className="text-sm text-red-600">{error}</div>}
 
-      {allUploaded && (
+      {isMulti && (
         <div className="space-y-2">
-          <h3 className="font-semibold">プレビュー</h3>
-          {single ? (
-            <div className="rounded-lg overflow-hidden border bg-white">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={validPhotos[0].dataUrl}
-                alt="preview"
-                className="w-full h-auto"
-                onLoad={() => onComposed(validPhotos[0].dataUrl)}
-              />
-            </div>
-          ) : (
-            <PhotoComposer
-              photos={validPhotos}
-              transforms={transforms.slice(0, petCount)}
-              onTransformsChange={(t) => {
-                const next = transforms.slice();
-                t.forEach((v, i) => (next[i] = v));
-                onTransformsChange(next);
-              }}
-              onComposed={onComposed}
-            />
-          )}
+          <h3 className="font-semibold text-sm">写真の合成エディタ</h3>
+          <PhotoComposer
+            photos={validPhotos}
+            transforms={transforms.slice(0, photoCount)}
+            onTransformsChange={(t) => {
+              const next = transforms.slice();
+              t.forEach((v, i) => (next[i] = v));
+              onTransformsChange(next);
+            }}
+            onComposed={onComposed}
+          />
+        </div>
+      )}
+
+      {hasAny && (
+        <div className="space-y-2">
+          <h3 className="font-semibold text-sm">名刺プレビュー</h3>
+          <MeishiPreview
+            composedPhoto={composedPhoto}
+            pets={pets}
+            petCount={petCount}
+            igHandle={igHandle}
+            igName={igName}
+            ownerName={ownerName}
+          />
         </div>
       )}
 
@@ -134,7 +160,7 @@ export function Step3Photos({
         <button
           type="button"
           onClick={onNext}
-          disabled={!allUploaded}
+          disabled={!hasAny}
           className="flex-1 py-3 rounded-lg bg-[#2D6A4F] text-white font-semibold disabled:opacity-50"
         >
           次へ

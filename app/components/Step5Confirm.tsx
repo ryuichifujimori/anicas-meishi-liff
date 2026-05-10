@@ -1,6 +1,7 @@
 "use client";
 
 import type { FormData } from "@/lib/types";
+import { MeishiPreview } from "./MeishiPreview";
 
 type Props = {
   data: FormData;
@@ -15,21 +16,20 @@ export function Step5Confirm({ data, submitting, error, onSubmit, onBack }: Prop
     <div className="space-y-5">
       <h2 className="text-xl font-bold text-center">入力内容の確認</h2>
 
-      {data.composedPhoto && (
-        <div className="rounded-lg overflow-hidden border bg-white">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={data.composedPhoto} alt="preview" className="w-full h-auto" />
-        </div>
-      )}
+      <MeishiPreview
+        composedPhoto={data.composedPhoto}
+        pets={data.pets}
+        petCount={data.petCount}
+        igHandle={data.ig_handle}
+        igName={data.ig_name}
+        ownerName={data.owner_name}
+      />
 
       <dl className="bg-white rounded-lg border divide-y">
         <Row label="Instagram" value={`@${data.ig_handle}`} />
-        <Row label="IG NAME" value={data.ig_name} />
+        <Row label="アカウント名" value={data.ig_name} />
         {data.owner_name && <Row label="オーナー名" value={data.owner_name} />}
-        <Row
-          label="ペット数"
-          value={`${data.petCount}匹`}
-        />
+        <Row label="ペット数" value={`${data.petCount}匹`} />
         {data.pets.slice(0, data.petCount).map((p, i) => (
           <Row
             key={i}

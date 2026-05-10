@@ -143,8 +143,13 @@ export default function Page() {
         {step === 3 && (
           <Step3Photos
             petCount={data.petCount}
+            pets={data.pets}
             photos={data.photos}
             transforms={data.transforms}
+            composedPhoto={data.composedPhoto}
+            igHandle={data.ig_handle}
+            igName={data.ig_name}
+            ownerName={data.owner_name}
             onPhotosChange={setPhotos}
             onTransformsChange={setTransforms}
             onComposed={setComposed}
