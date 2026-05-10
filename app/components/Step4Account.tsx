@@ -81,7 +81,7 @@ export function Step4Account({
             type="text"
             value={ownerName}
             onChange={(e) => update("owner_name", e.target.value)}
-            placeholder="例: 金野祐子"
+            placeholder="例: 鈴木太郎"
             className="w-full px-3 py-2 rounded border border-gray-300 focus:border-[#2D6A4F] focus:outline-none"
           />
         </div>

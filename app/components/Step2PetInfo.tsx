@@ -34,7 +34,7 @@ export function Step2PetInfo({ pets, onChange, onNext, onBack }: Props) {
                 type="text"
                 value={pet.breed}
                 onChange={(e) => update(i, "breed", e.target.value)}
-                placeholder="例: ポメラニアン"
+                placeholder="例: トイプードル"
                 className="w-full px-3 py-2 rounded border border-gray-300 focus:border-[#2D6A4F] focus:outline-none"
               />
             </div>
@@ -44,7 +44,7 @@ export function Step2PetInfo({ pets, onChange, onNext, onBack }: Props) {
                 type="text"
                 value={pet.name}
                 onChange={(e) => update(i, "name", e.target.value)}
-                placeholder="例: コテツ"
+                placeholder="例: ペコ"
                 className="w-full px-3 py-2 rounded border border-gray-300 focus:border-[#2D6A4F] focus:outline-none"
               />
             </div>
