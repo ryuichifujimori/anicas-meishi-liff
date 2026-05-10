@@ -1,0 +1,145 @@
+"use client";
+
+import { useRef, useState } from "react";
+import type { PetPhoto, PhotoTransform } from "@/lib/types";
+import { loadAndNormalizeImage } from "@/lib/image";
+import { PhotoComposer } from "./PhotoComposer";
+
+type Props = {
+  petCount: 1 | 2 | 3;
+  photos: (PetPhoto | null)[];
+  transforms: PhotoTransform[];
+  onPhotosChange: (photos: (PetPhoto | null)[]) => void;
+  onTransformsChange: (t: PhotoTransform[]) => void;
+  onComposed: (dataUrl: string) => void;
+  onNext: () => void;
+  onBack: () => void;
+};
+
+export function Step3Photos({
+  petCount,
+  photos,
+  transforms,
+  onPhotosChange,
+  onTransformsChange,
+  onComposed,
+  onNext,
+  onBack,
+}: Props) {
+  const [loadingIdx, setLoadingIdx] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const fileInputs = useRef<Array<HTMLInputElement | null>>([]);
+
+  const handleFile = async (idx: number, file: File | undefined) => {
+    if (!file) return;
+    setError(null);
+    setLoadingIdx(idx);
+    try {
+      const photo = await loadAndNormalizeImage(file);
+      const next = photos.slice();
+      next[idx] = photo;
+      onPhotosChange(next);
+    } catch (e) {
+      console.error(e);
+      setError("画像の読み込みに失敗しました。別の画像をお試しください。");
+    } finally {
+      setLoadingIdx(null);
+    }
+  };
+
+  const allUploaded = photos.slice(0, petCount).every((p) => p !== null);
+  const validPhotos = photos.slice(0, petCount).filter((p): p is PetPhoto => p !== null);
+
+  const single = petCount === 1;
+
+  return (
+    <div className="space-y-5">
+      <h2 className="text-xl font-bold text-center">写真をアップロード</h2>
+      <p className="text-sm text-gray-600 text-center">
+        HEIC/HEIF も自動でJPEGに変換されます。
+      </p>
+
+      <div className="grid grid-cols-3 gap-3">
+        {Array.from({ length: petCount }, (_, i) => (
+          <div key={i} className="space-y-1">
+            <button
+              type="button"
+              onClick={() => fileInputs.current[i]?.click()}
+              className="w-full aspect-square rounded-lg border-2 border-dashed border-gray-300 bg-white flex items-center justify-center overflow-hidden"
+            >
+              {loadingIdx === i ? (
+                <span className="text-xs text-gray-500">読み込み中…</span>
+              ) : photos[i] ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={photos[i]!.dataUrl}
+                  alt={`pet ${i + 1}`}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <span className="text-xs text-gray-500">+ 写真{i + 1}</span>
+              )}
+            </button>
+            <input
+              ref={(el) => {
+                fileInputs.current[i] = el;
+              }}
+              type="file"
+              accept="image/*,.heic,.heif"
+              className="hidden"
+              onChange={(e) => handleFile(i, e.target.files?.[0])}
+            />
+          </div>
+        ))}
+      </div>
+
+      {error && <div className="text-sm text-red-600">{error}</div>}
+
+      {allUploaded && (
+        <div className="space-y-2">
+          <h3 className="font-semibold">プレビュー</h3>
+          {single ? (
+            <div className="rounded-lg overflow-hidden border bg-white">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={validPhotos[0].dataUrl}
+                alt="preview"
+                className="w-full h-auto"
+                onLoad={() => onComposed(validPhotos[0].dataUrl)}
+              />
+            </div>
+          ) : (
+            <PhotoComposer
+              photos={validPhotos}
+              transforms={transforms.slice(0, petCount)}
+              onTransformsChange={(t) => {
+                const next = transforms.slice();
+                t.forEach((v, i) => (next[i] = v));
+                onTransformsChange(next);
+              }}
+              onComposed={onComposed}
+            />
+          )}
+        </div>
+      )}
+
+      <div className="flex gap-3">
+        <button
+          type="button"
+          onClick={onBack}
+          className="flex-1 py-3 rounded-lg border border-gray-300 bg-white text-gray-700 font-semibold"
+        >
+          戻る
+        </button>
+        <button
+          type="button"
+          onClick={onNext}
+          disabled={!allUploaded}
+          className="flex-1 py-3 rounded-lg bg-[#2D6A4F] text-white font-semibold disabled:opacity-50"
+        >
+          次へ
+        </button>
+      </div>
+    </div>
+  );
+}

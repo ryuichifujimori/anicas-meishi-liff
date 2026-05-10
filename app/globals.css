@@ -1,0 +1,28 @@
+@import "tailwindcss";
+
+:root {
+  --primary: #2D6A4F;
+  --primary-light: #40916C;
+  --primary-dark: #1B4332;
+}
+
+html, body {
+  font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic UI",
+    "Meiryo", sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background-color: #f8f9fa;
+  color: #212529;
+  overscroll-behavior-y: none;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+input, textarea, select {
+  font-size: 16px; /* prevent iOS zoom */
+}
