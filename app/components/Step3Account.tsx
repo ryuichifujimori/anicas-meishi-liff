@@ -31,6 +31,8 @@ export function Step3Account({
     <div className="space-y-5">
       <h2 className="text-xl font-bold text-center">アカウント情報</h2>
 
+      <SampleGuide />
+
       <div className="space-y-4">
         <div>
           <label className="block text-sm font-medium mb-1">
@@ -105,5 +107,87 @@ export function Step3Account({
         </button>
       </div>
     </div>
+  );
+}
+
+/**
+ * Side-by-side visual guide showing how the user's Instagram handle and
+ * display name map onto the printed business card.
+ *   ① = Instagram handle (peco_channel → @peco_channel on the card)
+ *   ② = Instagram display name (ペコ★トイプードル on both)
+ */
+function SampleGuide() {
+  return (
+    <section className="space-y-2">
+      <p className="text-xs text-gray-500 text-center">
+        ↓ 入力した情報は名刺にこのように反映されます
+      </p>
+      <div className="grid grid-cols-1 gap-3 justify-items-center">
+        <figure className="w-full max-w-[300px]">
+          <div
+            className="relative rounded-lg border border-gray-200 overflow-hidden bg-white"
+            style={{ containerType: "inline-size" }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/sample-instagram.png"
+              alt="Instagram プロフィール例"
+              className="block w-full h-auto"
+            />
+            <Marker n={1} top="6%" left="14%" />
+            <Marker n={2} top="23%" left="28%" />
+          </div>
+          <figcaption className="text-[10px] text-gray-500 mt-1 text-center">
+            Instagram プロフィール
+          </figcaption>
+        </figure>
+
+        <figure className="w-full max-w-[220px]">
+          <div
+            className="relative rounded-lg border border-gray-200 overflow-hidden bg-white"
+            style={{ containerType: "inline-size" }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/sample-meishi.png"
+              alt="完成名刺の例"
+              className="block w-full h-auto"
+            />
+            <Marker n={2} top="83%" left="16%" />
+            <Marker n={1} top="87%" left="16%" />
+          </div>
+          <figcaption className="text-[10px] text-gray-500 mt-1 text-center">
+            完成名刺
+          </figcaption>
+        </figure>
+      </div>
+    </section>
+  );
+}
+
+function Marker({
+  n,
+  top,
+  left,
+}: {
+  n: 1 | 2;
+  top: string;
+  left: string;
+}) {
+  return (
+    <span
+      aria-hidden
+      className="absolute -translate-x-1/2 -translate-y-1/2 flex items-center justify-center rounded-full bg-emerald-700 text-white font-bold ring-2 ring-white shadow"
+      style={{
+        top,
+        left,
+        width: "8cqw",
+        height: "8cqw",
+        fontSize: "4.2cqw",
+        lineHeight: 1,
+      }}
+    >
+      {n}
+    </span>
   );
 }
