@@ -11,11 +11,30 @@ type Props = {
   ownerName: string;
 };
 
-/**
- * Renders a preview of the business card by overlaying user-supplied
- * photo, text, and a generated QR onto /meishi-template.png. Positions are
- * percentages of the card so it scales with the container.
- */
+// Template image is 1046 × 1738 px. Measured key landmarks:
+//   ribbon                  y ≈ 42–56%
+//   right-side paw prints   y ≈ 65–79%
+//   Instagram icon          x ≈ 6–17%, y ≈ 83–89%
+//   anicas mark (bottom-R)  x ≈ 87–94%, y ≈ 90–94%
+// All layout values below are percentages of the card so the card scales
+// with its container; font sizes use cqw via inline-size container queries.
+const TEMPLATE_ASPECT = "1046 / 1738";
+
+const LAYOUT = {
+  photo: { top: "2.5%", left: "7%", width: "86%", height: "39%" },
+  textBlock: { top: "57%", left: "10%", width: "80%" },
+  igBlock: { top: "83%", left: "18%", width: "50%" },
+  qr: { top: "80%", right: "14%", width: "15%" },
+};
+
+const FONT = {
+  breed: "3.3cqw",
+  name: "6.6cqw",
+  owner: "3cqw",
+  igName: "3.4cqw",
+  igHandle: "3cqw",
+};
+
 export function MeishiPreview({
   composedPhoto,
   pets,
@@ -46,7 +65,7 @@ export function MeishiPreview({
     <div
       className="relative w-full max-w-[360px] mx-auto bg-white shadow-sm rounded overflow-hidden"
       style={{
-        aspectRatio: "1058 / 1764",
+        aspectRatio: TEMPLATE_ASPECT,
         containerType: "inline-size",
       }}
     >
@@ -58,77 +77,81 @@ export function MeishiPreview({
         className="absolute inset-0 w-full h-full object-contain pointer-events-none"
       />
 
-      {/* Photo */}
+      {/* Photo. Canvas aspect (~1.27) is matched to this slot so object-cover
+          fills without clipping. */}
       {composedPhoto && (
-        <div
-          className="absolute flex items-center justify-center"
-          style={{ top: "6%", left: "15%", width: "70%", height: "33%" }}
-        >
+        <div className="absolute overflow-hidden" style={LAYOUT.photo}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={composedPhoto}
             alt="pet"
-            className="w-full h-full object-contain"
+            className="w-full h-full object-cover"
           />
         </div>
       )}
 
-      {/* Pet text block (below ribbon) */}
+      {/* Pet text block below ribbon: breed (small) → name (large) → owner */}
       <div
         className="absolute text-center leading-tight"
-        style={{ top: "57%", left: "8%", width: "84%" }}
+        style={LAYOUT.textBlock}
       >
         {breeds && (
-          <div className="text-gray-700" style={{ fontSize: "3.2cqw" }}>
+          <div className="text-gray-800" style={{ fontSize: FONT.breed }}>
             {breeds}
           </div>
         )}
         {names && (
           <div
-            className="font-bold mt-[0.5cqw]"
-            style={{ fontSize: "5.6cqw" }}
+            className="font-bold text-gray-900"
+            style={{ fontSize: FONT.name, marginTop: "0.5cqw" }}
           >
             {names}
           </div>
         )}
         {ownerName.trim() && (
           <div
-            className="text-gray-700 mt-[0.8cqw]"
-            style={{ fontSize: "2.8cqw" }}
+            className="text-gray-800"
+            style={{ fontSize: FONT.owner, marginTop: "1.2cqw" }}
           >
             【owner:{ownerName.trim()}】
           </div>
         )}
       </div>
 
-      {/* IG name + handle, to the right of the IG icon already drawn in template */}
-      <div
-        className="absolute leading-tight"
-        style={{ top: "82.5%", left: "20%", width: "45%" }}
-      >
+      {/* IG name (line 1) + @handle (line 2), to the right of the Instagram
+          icon that is already drawn in the template */}
+      <div className="absolute leading-tight" style={LAYOUT.igBlock}>
         {igName.trim() && (
           <div
             className="font-medium text-gray-900"
-            style={{ fontSize: "3cqw" }}
+            style={{ fontSize: FONT.igName }}
           >
             {igName.trim()}
           </div>
         )}
         {handle && (
-          <div className="text-gray-700" style={{ fontSize: "2.8cqw" }}>
+          <div
+            className="text-gray-800"
+            style={{ fontSize: FONT.igHandle, marginTop: "0.3cqw" }}
+          >
             @{handle}
           </div>
         )}
       </div>
 
-      {/* QR code, bottom-right */}
+      {/* QR code, bottom-right (square) */}
       {qrSrc && (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={qrSrc}
           alt="QR"
           className="absolute"
-          style={{ top: "78%", right: "6%", width: "14%", height: "auto" }}
+          style={{
+            top: LAYOUT.qr.top,
+            right: LAYOUT.qr.right,
+            width: LAYOUT.qr.width,
+            aspectRatio: "1 / 1",
+          }}
         />
       )}
     </div>

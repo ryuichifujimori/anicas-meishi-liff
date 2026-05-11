@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import type { Pet, PetPhoto, PhotoTransform } from "@/lib/types";
 import { loadAndNormalizeImage } from "@/lib/image";
 import { PhotoComposer } from "./PhotoComposer";
@@ -63,18 +63,6 @@ export function Step4Photos({
     .filter((p): p is PetPhoto => p !== null);
   const photoCount = validPhotos.length;
   const hasAny = photoCount >= 1;
-  const isMulti = photoCount >= 2;
-
-  // Single photo: skip composer and emit the photo data URL directly.
-  // (For multi, PhotoComposer drives onComposed itself.)
-  useEffect(() => {
-    if (photoCount === 1) {
-      onComposed(validPhotos[0].dataUrl);
-    }
-    // onComposed is referentially unstable from the parent setter; avoid
-    // depending on it to prevent a render loop.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [photoCount, validPhotos[0]?.dataUrl]);
 
   return (
     <div className="space-y-5">
@@ -119,9 +107,9 @@ export function Step4Photos({
 
       {error && <div className="text-sm text-red-600">{error}</div>}
 
-      {isMulti && (
+      {hasAny && (
         <div className="space-y-2">
-          <h3 className="font-semibold text-sm">写真の合成エディタ</h3>
+          <h3 className="font-semibold text-sm">写真の編集</h3>
           <PhotoComposer
             photos={validPhotos}
             transforms={transforms.slice(0, photoCount)}

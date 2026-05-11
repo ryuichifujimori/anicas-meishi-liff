@@ -4,8 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import type { PetPhoto, PhotoTransform } from "@/lib/types";
 import { dataUrlToImage } from "@/lib/image";
 
+// Canvas aspect matches the meishi photo slot (~80% × 38% of card area
+// on a 1046×1738 template → ~1.27 aspect ratio).
 const CANVAS_W = 1200;
-const CANVAS_H = 800;
+const CANVAS_H = 948;
 
 type Props = {
   photos: PetPhoto[];
