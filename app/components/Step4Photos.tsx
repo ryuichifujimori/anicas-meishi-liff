@@ -22,7 +22,7 @@ type Props = {
   onBack: () => void;
 };
 
-export function Step3Photos({
+export function Step4Photos({
   petCount,
   pets,
   photos,

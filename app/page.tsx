@@ -4,8 +4,8 @@ import { useEffect, useState } from "react";
 import { StepIndicator } from "./components/StepIndicator";
 import { Step1PetCount } from "./components/Step1PetCount";
 import { Step2PetInfo } from "./components/Step2PetInfo";
-import { Step3Photos } from "./components/Step3Photos";
-import { Step4Account } from "./components/Step4Account";
+import { Step3Account } from "./components/Step3Account";
+import { Step4Photos } from "./components/Step4Photos";
 import { Step5Confirm } from "./components/Step5Confirm";
 import type { FormData, Pet, PetPhoto, PhotoTransform, SubmitPayload } from "@/lib/types";
 import { closeLiffWindow, getLineUserId, initLiff } from "@/lib/liff";
@@ -141,7 +141,17 @@ export default function Page() {
           />
         )}
         {step === 3 && (
-          <Step3Photos
+          <Step3Account
+            igHandle={data.ig_handle}
+            igName={data.ig_name}
+            ownerName={data.owner_name}
+            onChange={setAccount}
+            onNext={next}
+            onBack={back}
+          />
+        )}
+        {step === 4 && (
+          <Step4Photos
             petCount={data.petCount}
             pets={data.pets}
             photos={data.photos}
@@ -153,16 +163,6 @@ export default function Page() {
             onPhotosChange={setPhotos}
             onTransformsChange={setTransforms}
             onComposed={setComposed}
-            onNext={next}
-            onBack={back}
-          />
-        )}
-        {step === 4 && (
-          <Step4Account
-            igHandle={data.ig_handle}
-            igName={data.ig_name}
-            ownerName={data.owner_name}
-            onChange={setAccount}
             onNext={next}
             onBack={back}
           />

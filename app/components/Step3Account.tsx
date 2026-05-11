@@ -9,7 +9,7 @@ type Props = {
   onBack: () => void;
 };
 
-export function Step4Account({
+export function Step3Account({
   igHandle,
   igName,
   ownerName,
