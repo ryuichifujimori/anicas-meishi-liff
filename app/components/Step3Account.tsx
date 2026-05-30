@@ -134,8 +134,8 @@ function SampleGuide() {
               alt="Instagram プロフィール例"
               className="block w-full h-auto"
             />
-            <Marker n={1} top="6%" left="14%" />
-            <Marker n={2} top="23%" left="28%" />
+            <Marker n={1} top="7%" left="47%" />
+            <Marker n={2} top="25%" left="62%" />
           </div>
           <figcaption className="text-[10px] text-gray-500 mt-1 text-center">
             Instagram プロフィール
@@ -153,8 +153,8 @@ function SampleGuide() {
               alt="完成名刺の例"
               className="block w-full h-auto"
             />
-            <Marker n={2} top="83%" left="16%" />
-            <Marker n={1} top="87%" left="16%" />
+            <Marker n={2} top="84%" left="54%" />
+            <Marker n={1} top="90%" left="54%" />
           </div>
           <figcaption className="text-[10px] text-gray-500 mt-1 text-center">
             完成名刺
