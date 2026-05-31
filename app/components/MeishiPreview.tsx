@@ -14,8 +14,12 @@ type Props = {
 // Template image is 1046 × 1738 px. Layout values calibrated against the
 // real reference card (public/sample-meishi.png, 1070 × 1778). Measured
 // landmarks (as % of the card):
-//   photo slot              top 2.9%, left 5%, w 90%, bottom 45.5% (under ribbon)
-//   ribbon box top          y ≈ 45%
+//   photo slot              top 2.9%, left 5%, w 90%, bottom 46.9%
+//                           (extends past the ribbon top so it overlaps the band)
+//   ribbon box top          y ≈ 45.1% — the ribbon is re-drawn ON TOP of the
+//                           photo via /meishi-ribbon.png (transparent overlay)
+//                           so the white band + text float over the photo,
+//                           matching the printed card.
 //   breed / name / owner    y ≈ 61% / 66% / 71%
 //   Instagram icon          x ≈ 6–16%, y ≈ 84–90% (drawn in template)
 //   IG text (name + handle) x ≈ 18%, y ≈ 85–90%
@@ -27,7 +31,7 @@ type Props = {
 const TEMPLATE_ASPECT = "1046 / 1738";
 
 const LAYOUT = {
-  photo: { top: "2.9%", left: "5%", width: "90%", height: "42.6%" },
+  photo: { top: "2.9%", left: "5%", width: "90%", height: "44%" },
   textBlock: { top: "60%", left: "10%", width: "80%" },
   igBlock: { top: "84.5%", left: "18%", width: "46%" },
   qr: { top: "80%", right: "7.5%", width: "26.5%" },
@@ -95,6 +99,16 @@ export function MeishiPreview({
           />
         </div>
       )}
+
+      {/* Ribbon overlay — same framing as the template, drawn AFTER the photo
+          so the banner (white + outline + text) sits on top of the photo where
+          they overlap, like the printed card. Transparent everywhere else. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src="/meishi-ribbon.png"
+        alt=""
+        className="absolute inset-0 w-full h-full object-contain pointer-events-none"
+      />
 
       {/* Pet text block below ribbon: breed (small) → name (large) → owner */}
       <div
