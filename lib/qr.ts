@@ -24,9 +24,10 @@
 const LOGO_SRC = "/anicas_logo_br_square.png";
 const QR_SIZE = 1000; // output canvas size in px (square)
 const QR_MARGIN = 12; // quiet-zone margin in px
-const LOGO_RATIO = 0.2; // logo box width as a fraction of QR width
+const LOGO_RATIO = 0.15; // logo box width as a fraction of QR width
 const LOGO_RIGHT_GAP = 0.04; // gap from QR right edge (fraction of QR width)
 const LOGO_BOTTOM_GAP = 0.04; // gap from QR bottom edge (fraction of QR width)
+const WHITE_CIRCLE_RATIO = 1.4; // backing-circle diameter as a multiple of the logo's long edge
 
 /**
  * Builds the Instagram profile URL encoded into the QR. Mirrors the value
@@ -78,6 +79,24 @@ export async function generateMeishiQr(handle: string): Promise<string | null> {
     const w = QR_SIZE * LOGO_RATIO;
     const x = QR_SIZE - w - QR_SIZE * LOGO_RIGHT_GAP;
     const y = QR_SIZE - w - QR_SIZE * LOGO_BOTTOM_GAP;
+    const cx = x + w / 2;
+    const cy = y + w / 2;
+
+    // Layer order: QR body → white backing circle → logo. The circle lifts
+    // the logo off the QR dots for legibility; its centre matches the logo
+    // centre and its diameter is the logo's long edge × WHITE_CIRCLE_RATIO so
+    // an even margin surrounds the mark. Kept small enough that the bottom-
+    // right data it covers stays recoverable under error-correction level H,
+    // and it never reaches the three finder patterns. canvas arc fill is
+    // antialiased, so the rim is smooth (no jaggies).
+    const radius = (w * WHITE_CIRCLE_RATIO) / 2;
+    ctx.save();
+    ctx.fillStyle = "#FFFFFF";
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
     ctx.drawImage(logo, x, y, w, w);
   } catch (e) {
     // A missing/blocked logo asset must not break QR generation — the QR
