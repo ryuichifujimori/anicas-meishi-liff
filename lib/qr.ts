@@ -25,9 +25,8 @@ const LOGO_SRC = "/anicas_logo_br_square.png";
 const QR_SIZE = 1000; // output canvas size in px (square)
 const QR_MARGIN = 12; // quiet-zone margin in px
 const FINDER_MODULES = 7; // a finder pattern is 7×7 modules (QR spec)
+const FINDER_CENTRE_MODULE = 3.5; // a finder centre sits 3.5 modules in from its matrix edge
 const LOGO_RATIO = 0.12; // logo box width as a fraction of QR width (fits inside the finder-size circle)
-const LOGO_RIGHT_GAP = 0.04; // gap from QR right edge (fraction of QR width)
-const LOGO_BOTTOM_GAP = 0.04; // gap from QR bottom edge (fraction of QR width)
 
 /**
  * Builds the Instagram profile URL encoded into the QR. Mirrors the value
@@ -76,27 +75,34 @@ export async function generateMeishiQr(handle: string): Promise<string | null> {
 
   try {
     const logo = await loadLogo();
-    const w = QR_SIZE * LOGO_RATIO;
-    const x = QR_SIZE - w - QR_SIZE * LOGO_RIGHT_GAP;
-    const y = QR_SIZE - w - QR_SIZE * LOGO_BOTTOM_GAP;
-    const cx = x + w / 2;
-    const cy = y + w / 2;
 
     // Layer order: QR body → white backing circle → logo. The white circle's
-    // diameter is set equal to the QR finder pattern ("eye") outer size so it
-    // visually matches the three eyes. qr-code-styling draws each module at
-    // dotSize = floor((width − 2·margin) / moduleCount) px and a finder is
-    // FINDER_MODULES (7) modules wide, so the eye's outer edge = 7·dotSize.
-    // moduleCount is read from the generated QR, so the circle automatically
-    // tracks the QR version if the encoded content (and thus version) changes.
-    // The circle stays in the bottom-right corner, clear of all three finders,
-    // and is small enough that the data it covers is recoverable at EC level H.
+    // diameter equals the QR finder pattern ("eye") outer size and it is placed
+    // on the finder grid at the bottom-right corner — i.e. exactly where a 4th
+    // finder would sit — so it lines up with the bottom-left finder vertically
+    // and the top-right finder horizontally, visually matching the three eyes.
+    //
+    // qr-code-styling draws each module at dotSize = floor((width − 2·margin) /
+    // moduleCount) px, centres the matrix (origin = floor((width − count·dotSize)
+    // / 2)), and a finder is FINDER_MODULES (7) modules wide with its centre
+    // FINDER_CENTRE_MODULE (3.5) modules in from the edge. moduleCount is read
+    // from the generated QR, so everything tracks the QR version automatically.
+    // The circle covers only bottom-right data, recoverable at EC level H.
     // canvas arc fill is antialiased, so the rim is smooth (no jaggies).
-    const moduleCount = qr._qr?.getModuleCount();
-    const dotSize = moduleCount
-      ? Math.floor((QR_SIZE - 2 * QR_MARGIN) / moduleCount)
-      : (QR_SIZE - 2 * QR_MARGIN) / 37; // fallback ≈ version-5 sizing
+    const moduleCount = qr._qr?.getModuleCount() ?? 37; // fallback ≈ version 5
+    const dotSize = Math.floor((QR_SIZE - 2 * QR_MARGIN) / moduleCount);
+    const origin = Math.floor((QR_SIZE - moduleCount * dotSize) / 2);
+    // Bottom-right finder-grid position: same offset as the top-right finder's
+    // x and the bottom-left finder's y.
+    const centre = origin + (moduleCount - FINDER_CENTRE_MODULE) * dotSize;
+    const cx = centre;
+    const cy = centre;
     const radius = (FINDER_MODULES * dotSize) / 2;
+
+    const w = QR_SIZE * LOGO_RATIO;
+    const x = cx - w / 2;
+    const y = cy - w / 2;
+
     ctx.save();
     ctx.fillStyle = "#FFFFFF";
     ctx.beginPath();
