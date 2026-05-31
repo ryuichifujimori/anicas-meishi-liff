@@ -22,6 +22,7 @@ export type FormData = {
   photos: (PetPhoto | null)[];
   transforms: PhotoTransform[];
   composedPhoto: string | null; // data URL of composed image
+  qr_base64: string | null; // data URL of the styled QR (logo composited)
   ig_handle: string;
   ig_name: string;
   owner_name: string;
@@ -33,5 +34,6 @@ export type SubmitPayload = {
   owner_name: string;
   pets: Pet[];
   photo_base64: string;
+  qr_base64: string | null; // styled QR PNG; GAS saves it as {handle}_qr.png
   line_user_id: string | null;
 };
