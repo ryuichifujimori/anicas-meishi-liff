@@ -14,20 +14,19 @@
 //   colour          = #000000, transparent background
 //   error level     = H     (tolerates the bottom-right logo overlay)
 //
-// Logo placement was measured from public/sample-meishi.png. The visible
-// "a nicas" mark there is ~9–11% of the QR width, hugging the bottom-right
-// corner. The supplied 500×500 asset carries its own transparent padding, so
-// the overlay BOX is larger than the visible mark; LOGO_RATIO below is tuned
-// so the rendered mark lands in that 9–11% band while staying clear of all
-// three finder patterns (top-left, top-right, bottom-left).
+// Logo placement was measured from public/sample-meishi.png: the "a nicas"
+// mark hugs the bottom-right corner. Behind it we draw a white backing circle
+// whose diameter equals the QR finder pattern ("eye") outer size — 7 modules —
+// so the circle visually matches the three eyes. LOGO_RATIO is then sized so
+// the mark fits inside that circle. The circle stays in the bottom-right
+// corner, clear of all three finder patterns (top-left, top-right, bottom-left).
 
 const LOGO_SRC = "/anicas_logo_br_square.png";
 const QR_SIZE = 1000; // output canvas size in px (square)
 const QR_MARGIN = 12; // quiet-zone margin in px
-const LOGO_RATIO = 0.15; // logo box width as a fraction of QR width
-const LOGO_RIGHT_GAP = 0.04; // gap from QR right edge (fraction of QR width)
-const LOGO_BOTTOM_GAP = 0.04; // gap from QR bottom edge (fraction of QR width)
-const WHITE_CIRCLE_RATIO = 1.4; // backing-circle diameter as a multiple of the logo's long edge
+const FINDER_MODULES = 7; // a finder pattern is 7×7 modules (QR spec)
+const FINDER_CENTRE_MODULE = 3.5; // a finder centre sits 3.5 modules in from its matrix edge
+const LOGO_RATIO = 0.12; // logo box width as a fraction of QR width (fits inside the finder-size circle)
 
 /**
  * Builds the Instagram profile URL encoded into the QR. Mirrors the value
@@ -76,20 +75,34 @@ export async function generateMeishiQr(handle: string): Promise<string | null> {
 
   try {
     const logo = await loadLogo();
-    const w = QR_SIZE * LOGO_RATIO;
-    const x = QR_SIZE - w - QR_SIZE * LOGO_RIGHT_GAP;
-    const y = QR_SIZE - w - QR_SIZE * LOGO_BOTTOM_GAP;
-    const cx = x + w / 2;
-    const cy = y + w / 2;
 
-    // Layer order: QR body → white backing circle → logo. The circle lifts
-    // the logo off the QR dots for legibility; its centre matches the logo
-    // centre and its diameter is the logo's long edge × WHITE_CIRCLE_RATIO so
-    // an even margin surrounds the mark. Kept small enough that the bottom-
-    // right data it covers stays recoverable under error-correction level H,
-    // and it never reaches the three finder patterns. canvas arc fill is
-    // antialiased, so the rim is smooth (no jaggies).
-    const radius = (w * WHITE_CIRCLE_RATIO) / 2;
+    // Layer order: QR body → white backing circle → logo. The white circle's
+    // diameter equals the QR finder pattern ("eye") outer size and it is placed
+    // on the finder grid at the bottom-right corner — i.e. exactly where a 4th
+    // finder would sit — so it lines up with the bottom-left finder vertically
+    // and the top-right finder horizontally, visually matching the three eyes.
+    //
+    // qr-code-styling draws each module at dotSize = floor((width − 2·margin) /
+    // moduleCount) px, centres the matrix (origin = floor((width − count·dotSize)
+    // / 2)), and a finder is FINDER_MODULES (7) modules wide with its centre
+    // FINDER_CENTRE_MODULE (3.5) modules in from the edge. moduleCount is read
+    // from the generated QR, so everything tracks the QR version automatically.
+    // The circle covers only bottom-right data, recoverable at EC level H.
+    // canvas arc fill is antialiased, so the rim is smooth (no jaggies).
+    const moduleCount = qr._qr?.getModuleCount() ?? 37; // fallback ≈ version 5
+    const dotSize = Math.floor((QR_SIZE - 2 * QR_MARGIN) / moduleCount);
+    const origin = Math.floor((QR_SIZE - moduleCount * dotSize) / 2);
+    // Bottom-right finder-grid position: same offset as the top-right finder's
+    // x and the bottom-left finder's y.
+    const centre = origin + (moduleCount - FINDER_CENTRE_MODULE) * dotSize;
+    const cx = centre;
+    const cy = centre;
+    const radius = (FINDER_MODULES * dotSize) / 2;
+
+    const w = QR_SIZE * LOGO_RATIO;
+    const x = cx - w / 2;
+    const y = cy - w / 2;
+
     ctx.save();
     ctx.fillStyle = "#FFFFFF";
     ctx.beginPath();
