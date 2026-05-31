@@ -12,6 +12,7 @@ type Props = {
   photos: (PetPhoto | null)[];
   transforms: PhotoTransform[];
   composedPhoto: string | null;
+  qrSrc: string | null;
   igHandle: string;
   igName: string;
   ownerName: string;
@@ -28,6 +29,7 @@ export function Step4Photos({
   photos,
   transforms,
   composedPhoto,
+  qrSrc,
   igHandle,
   igName,
   ownerName,
@@ -128,6 +130,7 @@ export function Step4Photos({
           <h3 className="font-semibold text-sm">名刺プレビュー</h3>
           <MeishiPreview
             composedPhoto={composedPhoto}
+            qrSrc={qrSrc}
             pets={pets}
             petCount={petCount}
             igHandle={igHandle}

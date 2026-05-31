@@ -4,6 +4,7 @@ import type { Pet } from "@/lib/types";
 
 type Props = {
   composedPhoto: string | null;
+  qrSrc: string | null;
   pets: Pet[];
   petCount: 1 | 2 | 3;
   igHandle: string;
@@ -52,6 +53,7 @@ const FONT = {
 
 export function MeishiPreview({
   composedPhoto,
+  qrSrc,
   pets,
   petCount,
   igHandle,
@@ -69,12 +71,6 @@ export function MeishiPreview({
     .join(" & ");
 
   const handle = igHandle.trim();
-  const igProfileUrl = handle
-    ? `https://www.instagram.com/${encodeURIComponent(handle)}`
-    : "";
-  const qrSrc = handle
-    ? `https://quickchart.io/qr?text=${encodeURIComponent(igProfileUrl)}&size=240&margin=1`
-    : "";
 
   return (
     <div

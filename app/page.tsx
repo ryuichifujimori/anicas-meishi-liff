@@ -9,6 +9,7 @@ import { Step4Photos } from "./components/Step4Photos";
 import { Step5Confirm } from "./components/Step5Confirm";
 import type { FormData, Pet, PetPhoto, PhotoTransform, SubmitPayload } from "@/lib/types";
 import { closeLiffWindow, getLineUserId, initLiff } from "@/lib/liff";
+import { generateMeishiQr } from "@/lib/qr";
 
 const TOTAL_STEPS = 5;
 
@@ -21,6 +22,7 @@ const initialData: FormData = {
   photos: [null, null, null],
   transforms: [initialTransform(), initialTransform(), initialTransform()],
   composedPhoto: null,
+  qr_base64: null,
   ig_handle: "",
   ig_name: "",
   owner_name: "",
@@ -39,6 +41,26 @@ export default function Page() {
       setLineUserId(getLineUserId());
     });
   }, []);
+
+  // Regenerate the styled QR (logo composited) whenever the Instagram handle
+  // changes. The resulting data URL feeds both the preview and the Drive
+  // upload, so the two are guaranteed identical.
+  useEffect(() => {
+    let cancelled = false;
+    const handle = data.ig_handle.trim();
+    if (!handle) {
+      setData((d) => (d.qr_base64 === null ? d : { ...d, qr_base64: null }));
+      return;
+    }
+    generateMeishiQr(handle)
+      .then((url) => {
+        if (!cancelled) setData((d) => ({ ...d, qr_base64: url }));
+      })
+      .catch((e) => console.error("QR generation failed", e));
+    return () => {
+      cancelled = true;
+    };
+  }, [data.ig_handle]);
 
   const setPetCount = (n: 1 | 2 | 3) => setData((d) => ({ ...d, petCount: n }));
   const setPets = (pets: Pet[]) => setData((d) => ({ ...d, pets }));
@@ -76,6 +98,7 @@ export default function Page() {
         name: p.name.trim(),
       })),
       photo_base64: data.composedPhoto,
+      qr_base64: data.qr_base64,
       line_user_id: lineUserId,
     };
 
@@ -157,6 +180,7 @@ export default function Page() {
             photos={data.photos}
             transforms={data.transforms}
             composedPhoto={data.composedPhoto}
+            qrSrc={data.qr_base64}
             igHandle={data.ig_handle}
             igName={data.ig_name}
             ownerName={data.owner_name}
