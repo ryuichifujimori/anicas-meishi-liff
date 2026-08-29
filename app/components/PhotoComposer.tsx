@@ -3,12 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 import type { PetPhoto, PhotoTransform } from "@/lib/types";
 import { dataUrlToImage } from "@/lib/image";
+import { PHOTO_SLOT_ASPECT } from "@/lib/meishi-layout";
 
-// Canvas aspect matches the meishi photo slot (90% × 47.1% of the
-// 1046×1738 card → 941.4 / 818.6 ≈ 1.15 aspect ratio) so what the user
-// frames here is what object-cover shows on the card without re-cropping.
+// Canvas aspect is taken from the card's photo slot (lib/meishi-layout.ts)
+// so what the user frames here is what object-cover shows on the card without
+// re-cropping. 1200 px wide comfortably exceeds the ~682 px the slot occupies
+// at 350 dpi print resolution.
 const CANVAS_W = 1200;
-const CANVAS_H = 1044;
+const CANVAS_H = Math.round(CANVAS_W / PHOTO_SLOT_ASPECT);
 
 type Props = {
   photos: PetPhoto[];

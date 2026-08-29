@@ -1,6 +1,17 @@
 "use client";
 
+import type { CSSProperties } from "react";
 import type { Pet } from "@/lib/types";
+import {
+  ASSETS,
+  LAYOUT,
+  LINE_HEIGHT,
+  TEMPLATE_ASPECT,
+  TYPE,
+  type TypeSpec,
+  cqw,
+  pct,
+} from "@/lib/meishi-layout";
 
 type Props = {
   composedPhoto: string | null;
@@ -12,45 +23,15 @@ type Props = {
   ownerName: string;
 };
 
-// Template image is 1046 × 1738 px. Layout values calibrated against the
-// real reference card (public/sample-meishi.png, 1070 × 1778). Measured
-// landmarks (as % of the card):
-//   photo slot              top 2.9%, left 5%, w 90%, bottom 50% (overlaps ribbon)
-//   ribbon white band       top 45%, box bottom 53.6% (tails reach ~57.5%)
-//   breed / name / owner    y ≈ 61% / 66% / 71%
-//   Instagram icon          x ≈ 6–16%, y ≈ 84–90% (drawn in template)
-//   IG text (name + handle) x ≈ 18%, y ≈ 85–90%
-//   QR code                 w 26.5%, right margin 7.5%, vertical center 88%
-//                           (square; top derived: 88% − 26.5%·(1046/1738)/2 ≈ 80%)
-//   anicas mark (bottom-R)  x ≈ 88–91%, y ≈ 93–95%
-//
-// Z-ORDER (critical): the photo extends DOWN past the ribbon band top so its
-// bottom sits at ~50% (≈ middle of the white band), then the ribbon overlay
-// (/meishi-ribbon.png — the ribbon lifted off the template onto a transparent
-// background) is drawn ON TOP of the photo. This reproduces the real card,
-// where the ribbon's white band hides the photo's lower edge and the photo
-// peeks out around the band. Photo bottom 50% mirrors the reference, where the
-// photo content is visible down to ~49.9% in the gaps beside the ribbon box.
-//
-// All layout values below are percentages of the card so the card scales
-// with its container; font sizes use cqw via inline-size container queries.
-const TEMPLATE_ASPECT = "1046 / 1738";
-
-const LAYOUT = {
-  photo: { top: "2.9%", left: "5%", width: "90%", height: "47.1%" },
-  textBlock: { top: "60%", left: "10%", width: "80%" },
-  igBlock: { top: "84.5%", left: "18%", width: "46%" },
-  qr: { top: "80%", right: "7.5%", width: "26.5%" },
-};
-
-const FONT = {
-  breed: "3.3cqw",
-  name: "7.6cqw",
-  owner: "4.5cqw",
-  igName: "3.8cqw",
-  igHandle: "3.4cqw",
-};
-
+/**
+ * On-screen preview of the finished card.
+ *
+ * Every position, size, weight and colour comes from `lib/meishi-layout.ts`,
+ * which `lib/print.ts` also renders from — so the print-ready PDF and this
+ * preview can never drift apart. Fractions are turned into CSS percentages
+ * (`pct`) and container-query units (`cqw`) here; the print renderer turns the
+ * same fractions into device pixels.
+ */
 export function MeishiPreview({
   composedPhoto,
   qrSrc,
@@ -83,7 +64,7 @@ export function MeishiPreview({
       {/* Background template */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src="/meishi-template.png"
+        src={ASSETS.template}
         alt=""
         className="absolute inset-0 w-full h-full object-contain pointer-events-none"
       />
@@ -93,7 +74,15 @@ export function MeishiPreview({
           intentionally extended into the ribbon band; the ribbon overlay below
           is then drawn over it. */}
       {composedPhoto && (
-        <div className="absolute overflow-hidden" style={LAYOUT.photo}>
+        <div
+          className="absolute overflow-hidden"
+          style={{
+            top: pct(LAYOUT.photo.top),
+            left: pct(LAYOUT.photo.left),
+            width: pct(LAYOUT.photo.width),
+            height: pct(LAYOUT.photo.height),
+          }}
+        >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={composedPhoto}
@@ -109,58 +98,42 @@ export function MeishiPreview({
           IN FRONT of the photo and hides its lower edge. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src="/meishi-ribbon.png"
+        src={ASSETS.ribbon}
         alt=""
         className="absolute inset-0 w-full h-full object-contain pointer-events-none"
       />
 
       {/* Pet text block below ribbon: breed (small) → name (large) → owner */}
       <div
-        className="absolute text-center leading-tight"
-        style={LAYOUT.textBlock}
+        className="absolute text-center"
+        style={{
+          top: pct(LAYOUT.textBlock.top),
+          left: pct(LAYOUT.textBlock.left),
+          width: pct(LAYOUT.textBlock.width),
+          lineHeight: LINE_HEIGHT,
+        }}
       >
-        {breeds && (
-          <div className="text-gray-800" style={{ fontSize: FONT.breed }}>
-            {breeds}
-          </div>
-        )}
-        {names && (
-          <div
-            className="font-bold text-gray-900"
-            style={{ fontSize: FONT.name, marginTop: "0.5cqw" }}
-          >
-            {names}
-          </div>
-        )}
-        {ownerName.trim() && (
-          <div
-            className="text-gray-800"
-            style={{ fontSize: FONT.owner, marginTop: "2cqw" }}
-          >
-            【owner：{ownerName.trim()}】
-          </div>
-        )}
+        <Run spec={TYPE.breed} text={breeds} />
+        <Run spec={TYPE.name} text={names} />
+        <Run
+          spec={TYPE.owner}
+          text={ownerName.trim() && `【owner：${ownerName.trim()}】`}
+        />
       </div>
 
       {/* IG name (line 1) + @handle (line 2), to the right of the Instagram
           icon that is already drawn in the template */}
-      <div className="absolute leading-tight" style={LAYOUT.igBlock}>
-        {igName.trim() && (
-          <div
-            className="font-medium text-gray-900"
-            style={{ fontSize: FONT.igName }}
-          >
-            {igName.trim()}
-          </div>
-        )}
-        {handle && (
-          <div
-            className="text-gray-800"
-            style={{ fontSize: FONT.igHandle, marginTop: "0.3cqw" }}
-          >
-            @{handle}
-          </div>
-        )}
+      <div
+        className="absolute"
+        style={{
+          top: pct(LAYOUT.igBlock.top),
+          left: pct(LAYOUT.igBlock.left),
+          width: pct(LAYOUT.igBlock.width),
+          lineHeight: LINE_HEIGHT,
+        }}
+      >
+        <Run spec={TYPE.igName} text={igName.trim()} />
+        <Run spec={TYPE.igHandle} text={handle && `@${handle}`} />
       </div>
 
       {/* QR code, bottom-right (square) */}
@@ -171,13 +144,28 @@ export function MeishiPreview({
           alt="QR"
           className="absolute"
           style={{
-            top: LAYOUT.qr.top,
-            right: LAYOUT.qr.right,
-            width: LAYOUT.qr.width,
+            top: pct(LAYOUT.qr.top),
+            right: pct(LAYOUT.qr.right),
+            width: pct(LAYOUT.qr.width),
             aspectRatio: "1 / 1",
           }}
         />
       )}
     </div>
   );
+}
+
+/**
+ * One text run of the card. Omitted entirely when empty — `lib/print.ts`
+ * skips empty runs the same way, so the vertical flow matches.
+ */
+function Run({ spec, text }: { spec: TypeSpec; text: string | false }) {
+  if (!text) return null;
+  const style: CSSProperties = {
+    fontSize: cqw(spec.size),
+    fontWeight: spec.weight,
+    color: spec.color,
+  };
+  if (spec.marginTop) style.marginTop = cqw(spec.marginTop);
+  return <div style={style}>{text}</div>;
 }

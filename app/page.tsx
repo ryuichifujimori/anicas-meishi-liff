@@ -7,9 +7,10 @@ import { Step2PetInfo } from "./components/Step2PetInfo";
 import { Step3Account } from "./components/Step3Account";
 import { Step4Photos } from "./components/Step4Photos";
 import { Step5Confirm } from "./components/Step5Confirm";
-import type { FormData, Pet, PetPhoto, PhotoTransform, SubmitPayload } from "@/lib/types";
+import type { FormData, Pet, PetPhoto, PhotoTransform } from "@/lib/types";
 import { closeLiffWindow, getLineUserId, initLiff } from "@/lib/liff";
 import { generateMeishiQr } from "@/lib/qr";
+import { buildSubmitPayload, postMeishiOrder } from "@/lib/submit";
 
 const TOTAL_STEPS = 5;
 
@@ -89,29 +90,14 @@ export default function Page() {
       return;
     }
 
-    const payload: SubmitPayload = {
-      ig_handle: data.ig_handle.trim(),
-      ig_name: data.ig_name.trim(),
-      owner_name: data.owner_name.trim(),
-      pets: data.pets.slice(0, data.petCount).map((p) => ({
-        breed: p.breed.trim(),
-        name: p.name.trim(),
-      })),
-      photo_base64: data.composedPhoto,
-      qr_base64: data.qr_base64,
-      line_user_id: lineUserId,
-    };
-
     setSubmitting(true);
     try {
-      // GAS doPost typically does not echo CORS headers; mode:"no-cors" makes
-      // the response opaque but the POST still reaches the server.
-      await fetch(gasUrl, {
-        method: "POST",
-        mode: "no-cors",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      // Rendering the print-ready PDF lives in lib/submit + lib/print, not in
+      // this handler, so the same two calls can be made from a payment
+      // completion handler later. The existing "送信中…" state covers the
+      // extra second the render takes; nothing new is shown to the talent.
+      const payload = await buildSubmitPayload(data, lineUserId);
+      await postMeishiOrder(gasUrl, payload);
       setSubmitted(true);
       setTimeout(() => closeLiffWindow(), 1500);
     } catch (e) {
