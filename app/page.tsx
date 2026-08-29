@@ -23,7 +23,7 @@ const initialData: FormData = {
   photos: [null, null, null],
   transforms: [initialTransform(), initialTransform(), initialTransform()],
   composedPhoto: null,
-  qr_base64: null,
+  qr: null,
   ig_handle: "",
   ig_name: "",
   owner_name: "",
@@ -43,19 +43,19 @@ export default function Page() {
     });
   }, []);
 
-  // Regenerate the styled QR (logo composited) whenever the Instagram handle
-  // changes. The resulting data URL feeds both the preview and the Drive
-  // upload, so the two are guaranteed identical.
+  // Regenerate the styled QR whenever the Instagram handle changes. One
+  // result feeds both the preview and the print PDF, so the QR on screen and
+  // the QR on the card are guaranteed to be the same one.
   useEffect(() => {
     let cancelled = false;
     const handle = data.ig_handle.trim();
     if (!handle) {
-      setData((d) => (d.qr_base64 === null ? d : { ...d, qr_base64: null }));
+      setData((d) => (d.qr === null ? d : { ...d, qr: null }));
       return;
     }
     generateMeishiQr(handle)
-      .then((url) => {
-        if (!cancelled) setData((d) => ({ ...d, qr_base64: url }));
+      .then((qr) => {
+        if (!cancelled) setData((d) => ({ ...d, qr }));
       })
       .catch((e) => console.error("QR generation failed", e));
     return () => {
@@ -166,7 +166,7 @@ export default function Page() {
             photos={data.photos}
             transforms={data.transforms}
             composedPhoto={data.composedPhoto}
-            qrSrc={data.qr_base64}
+            qrSrc={data.qr?.png ?? null}
             igHandle={data.ig_handle}
             igName={data.ig_name}
             ownerName={data.owner_name}

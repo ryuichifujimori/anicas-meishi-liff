@@ -15,7 +15,7 @@ import type { FormData, SubmitPayload } from "./types";
 export function toPrintInput(form: FormData): MeishiPrintInput {
   return {
     composedPhoto: form.composedPhoto,
-    qrDataUrl: form.qr_base64,
+    qr: form.qr,
     pets: form.pets,
     petCount: form.petCount,
     igHandle: form.ig_handle,

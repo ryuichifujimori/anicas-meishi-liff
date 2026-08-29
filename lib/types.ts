@@ -1,3 +1,5 @@
+import type { MeishiQr } from "./qr";
+
 export type Pet = {
   breed: string;
   name: string;
@@ -22,7 +24,7 @@ export type FormData = {
   photos: (PetPhoto | null)[];
   transforms: PhotoTransform[];
   composedPhoto: string | null; // data URL of composed image
-  qr_base64: string | null; // data URL of the styled QR (logo composited)
+  qr: MeishiQr | null; // the styled QR, as both a preview PNG and print outlines
   ig_handle: string;
   ig_name: string;
   owner_name: string;
@@ -37,8 +39,9 @@ export type SubmitPayload = {
   // original artwork rather than from the flattened print file.
   photo_base64: string;
   // Print-ready PDF (data URL): 61 x 97 mm page = 55 x 91 mm card + 3 mm
-  // bleed, 350 dpi. The QR is baked into it, which is why the form no longer
-  // sends a separate qr_base64.
+  // bleed. Text, QR, logo and template are vector/text inside it and the photo
+  // is embedded at 350 dpi. The QR is part of it, which is why the form no
+  // longer sends a separate qr_base64.
   print_base64: string;
   line_user_id: string | null;
 };

@@ -9,6 +9,7 @@ import {
   TEMPLATE_ASPECT,
   TYPE,
   type TypeSpec,
+  cardText,
   cqw,
   pct,
 } from "@/lib/meishi-layout";
@@ -26,11 +27,11 @@ type Props = {
 /**
  * On-screen preview of the finished card.
  *
- * Every position, size, weight and colour comes from `lib/meishi-layout.ts`,
- * which `lib/print.ts` also renders from — so the print-ready PDF and this
- * preview can never drift apart. Fractions are turned into CSS percentages
- * (`pct`) and container-query units (`cqw`) here; the print renderer turns the
- * same fractions into device pixels.
+ * Every position, size, weight and colour — and every string, separators
+ * included — comes from `lib/meishi-layout.ts`, which `lib/print.ts` also
+ * renders from, so the print-ready PDF and this preview can never drift apart.
+ * Fractions are turned into CSS percentages (`pct`) and container-query units
+ * (`cqw`) here; the print renderer turns the same fractions into PDF points.
  */
 export function MeishiPreview({
   composedPhoto,
@@ -41,17 +42,7 @@ export function MeishiPreview({
   igName,
   ownerName,
 }: Props) {
-  const visiblePets = pets.slice(0, petCount);
-  const breeds = visiblePets
-    .map((p) => p.breed.trim())
-    .filter(Boolean)
-    .join(" / ");
-  const names = visiblePets
-    .map((p) => p.name.trim())
-    .filter(Boolean)
-    .join(" & ");
-
-  const handle = igHandle.trim();
+  const text = cardText({ pets, petCount, ownerName, igName, igHandle });
 
   return (
     <div
@@ -113,12 +104,9 @@ export function MeishiPreview({
           lineHeight: LINE_HEIGHT,
         }}
       >
-        <Run spec={TYPE.breed} text={breeds} />
-        <Run spec={TYPE.name} text={names} />
-        <Run
-          spec={TYPE.owner}
-          text={ownerName.trim() && `【owner：${ownerName.trim()}】`}
-        />
+        <Run spec={TYPE.breed} text={text.breeds} />
+        <Run spec={TYPE.name} text={text.names} />
+        <Run spec={TYPE.owner} text={text.owner} />
       </div>
 
       {/* IG name (line 1) + @handle (line 2), to the right of the Instagram
@@ -132,8 +120,8 @@ export function MeishiPreview({
           lineHeight: LINE_HEIGHT,
         }}
       >
-        <Run spec={TYPE.igName} text={igName.trim()} />
-        <Run spec={TYPE.igHandle} text={handle && `@${handle}`} />
+        <Run spec={TYPE.igName} text={text.igName} />
+        <Run spec={TYPE.igHandle} text={text.igHandle} />
       </div>
 
       {/* QR code, bottom-right (square) */}
@@ -159,7 +147,7 @@ export function MeishiPreview({
  * One text run of the card. Omitted entirely when empty — `lib/print.ts`
  * skips empty runs the same way, so the vertical flow matches.
  */
-function Run({ spec, text }: { spec: TypeSpec; text: string | false }) {
+function Run({ spec, text }: { spec: TypeSpec; text: string }) {
   if (!text) return null;
   const style: CSSProperties = {
     fontSize: cqw(spec.size),

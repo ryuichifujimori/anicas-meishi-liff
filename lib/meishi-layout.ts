@@ -3,13 +3,15 @@
  *
  * Consumed by BOTH renderers:
  *   - app/components/MeishiPreview.tsx … on-screen DOM/CSS preview
- *   - lib/print.ts                     … 350 dpi print-ready canvas → PDF
+ *   - lib/print.ts                     … the print-ready PDF
  *
  * Every geometric value lives here exactly once, expressed as a FRACTION of
  * the card box (never px, never %, never cqw), so the same number can be
- * turned into a CSS percentage for the preview and into device pixels for the
- * print raster. Do not restate any of these numbers in either renderer.
+ * turned into a CSS percentage for the preview and into PDF points for the
+ * print file. Do not restate any of these numbers in either renderer.
  */
+
+import type { Pet } from "./types";
 
 /* ------------------------------------------------------------------ *
  * Physical geometry (print)
@@ -27,19 +29,11 @@ export const PAGE_MM = {
   height: CARD_TRIM_MM.height + BLEED_MM * 2,
 } as const;
 
+/** Resolution the photo — the one raster element left on the card — is
+ *  resampled to before it is embedded. */
 export const PRINT_DPI = 350;
 
 const MM_PER_INCH = 25.4;
-
-/**
- * Raster size of the image embedded in the PDF: 840 × 1336 px.
- * floor() rather than round() so the numbers land exactly on the 1336 × 840
- * figure the print spec calls for (effective 349.8 dpi ≈ 350 dpi).
- */
-export const PRINT_PX = {
-  width: Math.floor((PAGE_MM.width * PRINT_DPI) / MM_PER_INCH),
-  height: Math.floor((PAGE_MM.height * PRINT_DPI) / MM_PER_INCH),
-} as const;
 
 /** Points (1/72 inch) — the unit PDF pages are measured in. */
 export const mmToPt = (mm: number) => (mm * 72) / MM_PER_INCH;
@@ -55,8 +49,20 @@ export const TEMPLATE_PX = { width: 1046, height: 1738 } as const;
 export const TEMPLATE_ASPECT = `${TEMPLATE_PX.width} / ${TEMPLATE_PX.height}`;
 
 export const ASSETS = {
+  /** Raster design — what the on-screen preview shows. */
   template: "/meishi-template.png",
   ribbon: "/meishi-ribbon.png",
+  /**
+   * The same two pieces of artwork as outlines, in single-page vector PDFs.
+   * `lib/print.ts` places these instead of the PNGs, so the paw prints, the
+   * ribbon line-art, the baked caption and the Instagram glyph print as
+   * shapes rather than pixels. Regenerated from the PNGs above by
+   * `scripts/build-print-vectors.py` — the PNGs stay the design source.
+   */
+  templateVector: "/meishi-template.pdf",
+  ribbonVector: "/meishi-ribbon.pdf",
+  /** The anicas mark placed in the QR's bottom-right corner (500 × 500). */
+  logo: "/anicas_logo_br_square.png",
 } as const;
 
 /** Paper white — also what the bleed area is flooded with. */
@@ -86,7 +92,7 @@ export const PAPER_COLOR = "#FFFFFF";
  *
  * `top`/`height` are fractions of the card HEIGHT; `left`/`right`/`width` are
  * fractions of the card WIDTH — exactly how CSS resolves them for an
- * absolutely positioned child, so the preview and the print raster agree.
+ * absolutely positioned child, so the preview and the print file agree.
  */
 export const LAYOUT = {
   photo: { top: 0.029, left: 0.05, width: 0.9, height: 0.471 },
@@ -134,20 +140,78 @@ export const TYPE = {
 
 export type TypeSpec = (typeof TYPE)[keyof typeof TYPE];
 
-/**
- * Font stack used by the card text. globals.css sets it on <body> and the
- * preview inherits it; the print renderer reads it back off the live document
- * (see `resolveCardFontFamily`) so the two can never drift apart. This literal
- * is only the fallback for a document that has not applied the stylesheet.
- */
-export const FALLBACK_FONT_FAMILY =
-  '-apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic UI", "Meiryo", sans-serif';
+export type TypeWeight = (typeof TYPE)[keyof typeof TYPE]["weight"];
 
-/** The font stack the card actually renders with, read off the live document. */
-export function resolveCardFontFamily(): string {
-  if (typeof window === "undefined" || !document.body) return FALLBACK_FONT_FAMILY;
-  const family = getComputedStyle(document.body).fontFamily;
-  return family || FALLBACK_FONT_FAMILY;
+/**
+ * Fonts embedded in the print PDF, one file per weight `TYPE` asks for.
+ *
+ * The card text goes into the PDF as text, not as pixels, so it needs a real
+ * font to travel with it — the browser's own UI font cannot be embedded. These
+ * are Noto Sans JP subset to the cp932 (JIS + NEC/IBM) repertoire, which covers
+ * the kana and kanji a pet, breed or owner name can be written with; see
+ * `scripts/build-print-fonts.sh`. pdf-lib subsets them again on the way in, so
+ * a finished PDF only carries the handful of glyphs that card actually uses.
+ *
+ * Plain TTF rather than WOFF: fontkit has to undo a WOFF's per-table deflate
+ * in JavaScript before it can subset, which costs seconds on a phone, and the
+ * server compresses the file on the wire either way.
+ */
+export const PRINT_FONTS: Record<TypeWeight, string> = {
+  400: "/fonts/NotoSansJP-400.ttf",
+  500: "/fonts/NotoSansJP-500.ttf",
+  700: "/fonts/NotoSansJP-700.ttf",
+};
+
+/**
+ * Picked up only when a character is missing from the fonts above — an emoji
+ * in an Instagram display name, typically. Fetched lazily, so a card whose
+ * text is entirely kana/kanji/latin never pays for it.
+ */
+export const PRINT_FALLBACK_FONT = "/fonts/NotoEmoji-400.ttf";
+
+/* ------------------------------------------------------------------ *
+ * Copy
+ * ------------------------------------------------------------------ */
+
+/**
+ * What separates the pets on a card that carries more than one: a full-width
+ * space, exactly as on the printed card. No "&" between names and no "/"
+ * between breeds.
+ */
+export const PET_SEPARATOR = "\u3000";
+
+export type CardTextInput = {
+  pets: Pet[];
+  petCount: number;
+  ownerName: string;
+  igName: string;
+  igHandle: string;
+};
+
+/**
+ * Every string the card shows, composed once for both renderers — so the
+ * separators and the 【owner：…】/@ decoration cannot drift between the
+ * preview and the print PDF either. An empty run is returned as "" and is
+ * skipped by both renderers, closing its gap in the vertical flow.
+ */
+export function cardText(input: CardTextInput) {
+  const visible = input.pets.slice(0, input.petCount);
+  const list = (field: (pet: Pet) => string) =>
+    visible
+      .map((pet) => field(pet).trim())
+      .filter(Boolean)
+      .join(PET_SEPARATOR);
+
+  const owner = input.ownerName.trim();
+  const handle = input.igHandle.trim();
+
+  return {
+    breeds: list((pet) => pet.breed),
+    names: list((pet) => pet.name),
+    owner: owner && `【owner：${owner}】`,
+    igName: input.igName.trim(),
+    igHandle: handle && `@${handle}`,
+  };
 }
 
 /* ------------------------------------------------------------------ *
