@@ -1,6 +1,10 @@
 "use client";
 
-const MAX_DIMENSION = 1200;
+// Longest edge kept from the uploaded photo. Sized for 350 dpi print rather
+// than for the on-screen preview: the card's photo slot is ~682 x 593 px at
+// print resolution, and the framing editor lets the talent zoom in up to 3x,
+// so the source has to carry more pixels than the slot alone needs.
+const MAX_DIMENSION = 2000;
 const JPEG_QUALITY = 0.85;
 
 /**

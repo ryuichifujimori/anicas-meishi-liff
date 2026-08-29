@@ -33,7 +33,12 @@ export type SubmitPayload = {
   ig_name: string;
   owner_name: string;
   pets: Pet[];
+  // Composed pet photo. Kept so a card can be remade or reordered from the
+  // original artwork rather than from the flattened print file.
   photo_base64: string;
-  qr_base64: string | null; // styled QR PNG; GAS saves it as {handle}_qr.png
+  // Print-ready PDF (data URL): 61 x 97 mm page = 55 x 91 mm card + 3 mm
+  // bleed, 350 dpi. The QR is baked into it, which is why the form no longer
+  // sends a separate qr_base64.
+  print_base64: string;
   line_user_id: string | null;
 };
