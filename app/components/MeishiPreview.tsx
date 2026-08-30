@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, type CSSProperties } from "react";
+import type { CSSProperties } from "react";
 import type { Pet } from "@/lib/types";
 import {
   ASSETS,
@@ -9,19 +9,16 @@ import {
   TEMPLATE_ASPECT,
   TYPE,
   type TypeSpec,
+  type Measured,
   cardText,
   clampSpread,
   cqw,
-  fittedSize,
+  inkCentred,
+  inkOffset,
+  layoutPets,
   pct,
-  petGap,
 } from "@/lib/meishi-layout";
-import {
-  bearingsEm,
-  textEm,
-  useCardFont,
-  useSpreadLimits,
-} from "@/lib/card-metrics";
+import { measureText, useCardFont, useSpreadLimits } from "@/lib/card-metrics";
 
 type Props = {
   composedPhoto: string | null;
@@ -59,8 +56,18 @@ export function MeishiPreview({
   // What the talent typed decides how far the bar could go, so a value saved
   // against shorter names is brought back inside range here rather than
   // pushing the card out of its block.
-  const limits = useSpreadLimits(text.breeds, text.names, family);
-  const spread = clampSpread(nameSpread, limits);
+  const limits = useSpreadLimits(
+    text.pets.map((p) => p.name),
+    family,
+  );
+  const names = text.pets.map((p) => measureText(p.name, TYPE.name.weight, family));
+  const breeds = text.pets.map((p) => measureText(p.breed, TYPE.breed.weight, family));
+  const columns = layoutPets(names, breeds, clampSpread(nameSpread, limits));
+  const line = (measures: Measured[], size: number, word: (i: number) => string) =>
+    text.pets.map((_, i) => ({
+      text: word(i),
+      left: inkCentred(measures[i], columns.axes[i], size),
+    }));
 
   return (
     <div
@@ -122,9 +129,17 @@ export function MeishiPreview({
           lineHeight: LINE_HEIGHT,
         }}
       >
-        <Run spec={TYPE.breed} parts={text.breeds} fit {...{ spread, family }} />
-        <Run spec={TYPE.name} parts={text.names} {...{ spread, family }} />
-        <Run spec={TYPE.owner} parts={[text.owner]} {...{ family }} />
+        <PetLine
+          spec={TYPE.breed}
+          size={columns.breedSize}
+          items={line(breeds, columns.breedSize, (i) => text.pets[i].breed)}
+        />
+        <PetLine
+          spec={TYPE.name}
+          size={columns.nameSize}
+          items={line(names, columns.nameSize, (i) => text.pets[i].name)}
+        />
+        <Run spec={TYPE.owner} text={text.owner} {...{ family }} />
       </div>
 
       {/* IG name (line 1) + @handle (line 2), to the right of the Instagram
@@ -138,8 +153,8 @@ export function MeishiPreview({
           lineHeight: LINE_HEIGHT,
         }}
       >
-        <Run spec={TYPE.igName} parts={[text.igName]} />
-        <Run spec={TYPE.igHandle} parts={[text.igHandle]} />
+        <Run spec={TYPE.igName} text={text.igName} />
+        <Run spec={TYPE.igHandle} text={text.igHandle} />
       </div>
 
       {/* QR code, bottom-right (square) */}
@@ -162,92 +177,84 @@ export function MeishiPreview({
 }
 
 /**
- * One text run of the card — the pets' own words, one string each, or a single
- * string for the lines that are not per-pet. Omitted entirely when empty;
- * `lib/print.ts` skips empty runs the same way, so the vertical flow matches.
+ * One line of a pet column block: the breed, or the name. Each item is already
+ * placed on its own column's axis by `layoutPets`, so the line is a row of
+ * absolutely positioned words rather than a flowed one — the same placement
+ * `lib/print.ts` makes in the PDF.
  *
- * With `family` the run is centred on its ink rather than on its advance
- * width; with `fit` it is also set smaller, as far as it takes, rather than
- * allowed onto a second line. The left-aligned runs need neither.
+ * The row keeps the height the design asks for even when the words have been
+ * set smaller to fit, so shrinking one line never shifts the ones below it.
  */
-function Run({
+function PetLine({
   spec,
-  parts,
-  spread = 0,
-  family = "",
-  fit = false,
+  size,
+  items,
 }: {
   spec: TypeSpec;
-  parts: string[];
-  spread?: number;
-  family?: string;
-  fit?: boolean;
+  size: number;
+  items: { text: string; left: number }[];
 }) {
-  const shown = parts.filter(Boolean);
+  const shown = items.filter((item) => item.text);
   if (!shown.length) return null;
 
-  const widths = family ? shown.map((p) => textEm(p, spec.weight, family)) : null;
-  const gap = petGap(spec, spread);
-  const size = fit && widths ? fittedSize(spec, widths, gap) : spec.size;
-  const shift = family ? inkShift(shown, spec.weight, family) : 0;
-
   const style: CSSProperties = {
-    fontSize: cqw(size),
-    fontWeight: spec.weight,
-    color: spec.color,
+    position: "relative",
+    height: cqw(LINE_HEIGHT * spec.size),
   };
   if (spec.marginTop) style.marginTop = cqw(spec.marginTop);
-  if (shift) style.transform = `translateX(${shift}em)`;
-  // A fitted line has been sized to hold; it must never take the second line
-  // it was sized out of, and it keeps the line box the design asks for so the
-  // line below it does not move either.
-  if (fit) {
-    style.whiteSpace = "nowrap";
-    style.lineHeight = cqw(LINE_HEIGHT * spec.size);
-  }
 
   return (
     <div style={style}>
-      {shown.map((part, i) => (
-        <Fragment key={i}>
-          {i > 0 && (
-            // What holds two pets apart. A measured box rather than a
-            // full-width space, so the bar in step 4 can open it up — and the
-            // same box, in the same units, as the gap lib/print.ts leaves.
-            <span
-              aria-hidden
-              style={{ display: "inline-block", width: cqw(gap) }}
-            />
-          )}
-          {part}
-        </Fragment>
+      {shown.map((item, i) => (
+        <span
+          key={i}
+          style={{
+            position: "absolute",
+            top: 0,
+            left: cqw(item.left - LAYOUT.textBlock.left),
+            fontSize: cqw(size),
+            lineHeight: cqw(LINE_HEIGHT * spec.size),
+            fontWeight: spec.weight,
+            color: spec.color,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {item.text}
+        </span>
       ))}
     </div>
   );
 }
 
 /**
- * How far a centred line has to slide, in ems of its own size, to sit centred
- * on its INK rather than on its advance width.
+ * One of the card's single-string lines — the owner, the Instagram name, the
+ * handle. Omitted entirely when empty; `lib/print.ts` skips empty lines the
+ * same way, so the vertical flow matches.
  *
- * A Japanese glyph is drawn inside a full-width em and carries whatever is left
- * over as side bearings, and those differ wildly from glyph to glyph — the ト
- * that opens トイプードル hangs 0.30 em of empty space off its left, where the
- * ペ that opens ペコ hangs 0.04. Centring the advance box therefore leaves the
- * breed line and the name line on visibly different axes, the name reading
- * left of the breed. Taking the two outer bearings off first is what "centred"
- * means to the eye. `lib/print.ts` follows the same rule against the font it
- * embeds, so the card and this preview agree.
- *
- * On a line long enough to wrap, the browser picks the break and the outer
- * characters of the whole run are used for every line of it.
+ * Pass `family` to have the line centred on its ink rather than on its advance
+ * width (`inkOffset`); the left-aligned lines do not need it.
  */
-function inkShift(parts: string[], weight: number, family: string): number {
-  const first = Array.from(parts[0] ?? "")[0] ?? "";
-  const tail = Array.from(parts[parts.length - 1] ?? "");
-  const last = tail[tail.length - 1] ?? "";
-  if (!first || !last) return 0;
-  const { lsb } = bearingsEm(first, weight, family);
-  const { rsb } = bearingsEm(last, weight, family);
-  return -(lsb - rsb) / 2;
+function Run({
+  spec,
+  text,
+  family = "",
+}: {
+  spec: TypeSpec;
+  text: string;
+  family?: string;
+}) {
+  if (!text) return null;
+
+  const style: CSSProperties = {
+    fontSize: cqw(spec.size),
+    fontWeight: spec.weight,
+    color: spec.color,
+  };
+  if (spec.marginTop) style.marginTop = cqw(spec.marginTop);
+  if (family) {
+    const shift = inkOffset(measureText(text, spec.weight, family));
+    if (shift) style.transform = `translateX(${shift}em)`;
+  }
+
+  return <div style={style}>{text}</div>;
 }

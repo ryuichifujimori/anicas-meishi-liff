@@ -56,12 +56,15 @@ export function Step4Photos({
   const fileInputs = useRef<Array<HTMLInputElement | null>>([]);
 
   // The bar's stops are not a fixed distance: they come from the width of the
-  // words the talent actually typed, measured in the font the card is set in.
-  // Left, the first pair of words meets; right, the names reach the card's
-  // margin. Short names therefore open much further than long ones.
+  // names the talent actually typed, measured in the font the card is set in.
+  // Left, the columns close up; right, the names reach the card's margin.
+  // Short names therefore open much further than long ones.
   const family = useCardFont();
   const text = cardText({ pets, petCount, ownerName, igName, igHandle });
-  const spreadLimits = useSpreadLimits(text.breeds, text.names, family);
+  const spreadLimits = useSpreadLimits(
+    text.pets.map((pet) => pet.name),
+    family,
+  );
   const spreadRange = spreadLimits.max - spreadLimits.min;
 
   const handleFile = async (idx: number, file: File | undefined) => {

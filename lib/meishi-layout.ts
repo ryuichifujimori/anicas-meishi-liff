@@ -217,90 +217,64 @@ export type CardTextInput = {
  * either. An empty run is skipped by both renderers, closing its gap in the
  * vertical flow.
  *
- * The pet lines come back as ONE STRING PER PET rather than as a joined line:
- * what goes between them is a measured gap (`petGap`), not a character, which
- * is what lets the talent open the names up. Each string is trimmed here, so
+ * The pets come back as PAIRS, one per column, so a breed can never be
+ * separated from the name it belongs to. Every string is trimmed here, so
  * nothing but the pet's own letters reaches either renderer.
  */
 export function cardText(input: CardTextInput) {
-  const visible = input.pets.slice(0, input.petCount);
-  const list = (field: (pet: Pet) => string) =>
-    visible.map((pet) => field(pet).trim()).filter(Boolean);
-
   const owner = input.ownerName.trim();
   const handle = input.igHandle.trim();
 
   return {
-    breeds: list((pet) => pet.breed),
-    names: list((pet) => pet.name),
+    pets: input.pets
+      .slice(0, input.petCount)
+      .map((pet) => ({ name: pet.name.trim(), breed: pet.breed.trim() }))
+      .filter((pet) => pet.name || pet.breed),
     owner: owner && `【owner：${owner}】`,
     igName: input.igName.trim(),
     igHandle: handle && `@${handle}`,
   };
 }
 
+/** Every character the card will set, for the font loader to size its subset. */
+export const cardGlyphs = (text: ReturnType<typeof cardText>) =>
+  text.pets.map((p) => p.name + p.breed).join("") +
+  text.owner + text.igName + text.igHandle;
+
 /* ------------------------------------------------------------------ *
- * How far apart the pets sit
+ * The pets' own words
  * ------------------------------------------------------------------ *
  *
- * The bar in step 4 sets ONE number: how much to add to the gap between two
- * pets, as a fraction of the card width. It is added to the name line and the
- * breed line alike, which is what keeps a pet's name and its breed moving
- * together — widening by d slides each outer pet d/2 (two pets) or d (three)
- * away from the card's centre line, on both lines equally.
+ * A card carries one COLUMN PER PET: the pet's breed on top, its name below,
+ * both hung on the same vertical axis, and the columns laid out across the
+ * text block. Two, three, four pets — it is the same rule with a different
+ * count; nothing here branches on how many there are.
  *
- * How far it may travel is NOT a fixed number: it depends on what the talent
- * typed. Both ends are worked out from the measured width of the actual words
- * (`spreadLimits`), so a card with short names can open up much further than
- * one with long ones. The renderers supply the measurements — the preview from
- * a canvas in the browser's own font, the print file from the font it embeds —
- * so neither has to guess at the other's metrics.
+ * The bar in step 4 sets one number: how much to add to the gap between two
+ * pets, as a fraction of the card width. Because the breed hangs on its name's
+ * axis, moving the columns moves both lines by exactly the same amount.
+ *
+ * Neither line is ever allowed onto a second line or past the block's edges.
+ * The names come down in size until they fit; the breeds come down until they
+ * clear their neighbours and the block. Sizes are worked out from the WORDS
+ * THEMSELVES, measured by whichever renderer is asking — the preview from a
+ * canvas in the browser's font, the print file from the font it embeds.
  */
-
-/** One line the bar moves: its type, and the width of each pet's text on it
- *  in ems of that line's own size. */
-export type SpreadLine = {
-  spec: TypeSpec;
-  /** One entry per pet, in ems. */
-  widths: number[];
-  /** Whether the line may shrink to stay on one line (`fittedSize`). A line
-   *  that can shrink does not cap how far the bar opens. */
-  shrinks?: boolean;
-};
-
-const movable = (lines: SpreadLine[]) => lines.filter((l) => l.widths.length >= 2);
-
-const lineWidth = (line: SpreadLine) =>
-  line.widths.reduce((total, w) => total + w, 0) * line.spec.size;
 
 /**
- * The bar's travel, as a fraction of the card width.
- *
- * `min` is where the first pair of words on any line meets: one line's gap
- * closes to nothing, and pushing past it would run two words into each other.
- * With a breed line present that is the breed line, whose gap (one breed em)
- * is the smaller of the two — so the names stop a little short of touching.
- * Letting them touch would need the breed line to move a different amount from
- * the name line, and it moves the same amount by design.
- *
- * `max` is where the outermost word of a line that cannot shrink — the names —
- * reaches the edge of the text block, i.e. the card's own margin. The breed
- * line does not cap it: it shrinks to fit instead.
+ * A string as its renderer measured it, in ems of its own size: how far it
+ * advances, and where its ink actually starts and ends relative to the point
+ * it is drawn from.
  */
-export function spreadLimits(lines: SpreadLine[]): { min: number; max: number } {
-  const moving = movable(lines);
-  if (!moving.length) return { min: 0, max: 0 };
+export type Measured = { advance: number; inkLeft: number; inkRight: number };
 
-  const min = -Math.min(...moving.map((l) => l.spec.size));
-  const rigid = moving.filter((l) => !l.shrinks);
-  const max = Math.min(
-    ...(rigid.length ? rigid : moving).map(
-      (l) =>
-        (LAYOUT.textBlock.width - lineWidth(l)) / (l.widths.length - 1) - l.spec.size,
-    ),
-  );
-  return { min, max: Math.max(min, max) };
-}
+export const EMPTY_MEASURE: Measured = { advance: 0, inkLeft: 0, inkRight: 0 };
+
+const inkWidth = (m: Measured) => m.inkRight - m.inkLeft;
+const inkMid = (m: Measured) => (m.inkLeft + m.inkRight) / 2;
+
+/** Where the type block sits and how wide it is, in card fractions. */
+type Block = { left: number; width: number };
 
 export type SpreadLimits = { min: number; max: number };
 
@@ -323,43 +297,142 @@ export const barFromSpread = (spread: number, limits: SpreadLimits) => {
   return limits.max ? spread / limits.max : 0;
 };
 
-/**
- * Gap between two pets on one line, as a fraction of the card width: one em —
- * the full-width space the line used to be joined with, so the bar at rest
- * reproduces the card exactly as it was — plus whatever the bar adds.
- */
-export const petGap = (spec: TypeSpec, spread: number) => spec.size + spread;
+/** Gap between two columns: one name em — the full-width space the line used
+ *  to be joined with — plus whatever the bar adds. */
+const columnGap = (spread: number) => Math.max(0, TYPE.name.size + spread);
 
 /**
- * Floor for a line that shrinks to fit: 4 pt, about the smallest Japanese type
- * worth putting on a printed card.
+ * How far the bar may travel for the words currently typed.
+ *
+ * `min` closes the gap to nothing: the names' boxes meet, which is as tight as
+ * the card can be set. `max` is the point where the names reach the block's
+ * edges — and never more than that, because past it the names would have to be
+ * set smaller than they already are just to make room for the space between
+ * them. On a card whose names already fill the block, `max` is 0 and the bar
+ * only tightens.
  */
-export const MIN_TYPE_SIZE = (4 * MM_PER_INCH) / 72 / CARD_TRIM_MM.width;
+export function spreadLimits(
+  names: Measured[],
+  block: Block = LAYOUT.textBlock,
+): SpreadLimits {
+  if (names.length < 2) return { min: 0, max: 0 };
+  const advance = names.reduce((total, m) => total + m.advance, 0);
+  if (!advance) return { min: 0, max: 0 };
 
-/**
- * The size a line has to come down to for its words to hold on ONE line, as a
- * fraction of the card width.
- *
- * A long breed — オーストラリアンラブラドゥードゥル and the like — used to wrap
- * onto a second line, which pushed the name line down and broke the spacing
- * between the two. The line is set smaller instead, and never wraps.
- *
- * The gaps are left exactly as the bar set them and only the glyphs shrink, so
- * the breed line keeps tracking the name line. Returns the floor when even
- * that is not enough, in which case the line runs into the card's margins
- * rather than wrapping.
- */
-export function fittedSize(
-  spec: TypeSpec,
-  widths: number[],
-  gap: number,
-  blockWidth: number = LAYOUT.textBlock.width,
-): number {
-  const glyphs = widths.reduce((total, w) => total + w, 0) * spec.size;
-  const room = blockWidth - (widths.length - 1) * gap;
-  if (glyphs <= room) return spec.size;
-  return Math.max(MIN_TYPE_SIZE, (room / glyphs) * spec.size);
+  const gaps = names.length - 1;
+  const design = TYPE.name.size;
+  const atRest = Math.min(design, (block.width - gaps * design) / advance);
+  const widest = (block.width - advance * atRest) / gaps;
+  return { min: -design, max: Math.max(0, widest - design) };
 }
+
+/** Where every pet's words go: one axis each, and the size the two lines end
+ *  up at once they have been made to fit. */
+export type PetLayout = {
+  /** One per pet, in card fractions from the page's left edge. */
+  axes: number[];
+  nameSize: number;
+  breedSize: number;
+};
+
+/**
+ * Lays the columns out.
+ *
+ * The names are set as one line — measured widths, the bar's gap between them,
+ * the whole thing centred in the block on its INK rather than on its advance
+ * box — and each pet's axis is then wherever its own name's ink centre landed.
+ * That is exactly what a single centred line has always done, so a card with
+ * one or two pets comes out where it always did; what is new is that the
+ * breeds are hung on those same axes instead of being centred as a line of
+ * their own.
+ *
+ * Each line is then only as big as it can be:
+ *   names   the largest size at which they still fit the block, never more
+ *           than the design size
+ *   breeds  the largest size at which no breed reaches its neighbour or the
+ *           block's edge, never more than the design size
+ *
+ * so nothing ever wraps and nothing ever runs off the card.
+ */
+export function layoutPets(
+  names: Measured[],
+  breeds: Measured[],
+  spread: number,
+  block: Block = LAYOUT.textBlock,
+): PetLayout {
+  const n = names.length;
+  if (!n) return { axes: [], nameSize: TYPE.name.size, breedSize: TYPE.breed.size };
+
+  const gap = columnGap(spread);
+  const advance = names.reduce((total, m) => total + m.advance, 0);
+  const room = Math.max(0, block.width - (n - 1) * gap);
+  const nameSize = advance
+    ? Math.min(TYPE.name.size, room / advance)
+    : TYPE.name.size;
+
+  // Where each name starts, measured from the first one.
+  const starts: number[] = [];
+  let x = 0;
+  for (const m of names) {
+    starts.push(x);
+    x += m.advance * nameSize + gap;
+  }
+  // Centre the run on the ink the outermost names actually put down.
+  const first = starts[0] + names[0].inkLeft * nameSize;
+  const last = starts[n - 1] + names[n - 1].inkRight * nameSize;
+  const origin = block.left + (block.width - (last - first)) / 2 - first;
+  const axes = names.map((m, i) => origin + starts[i] + inkMid(m) * nameSize);
+
+  return { axes, nameSize, breedSize: breedSize(breeds, axes, block) };
+}
+
+/**
+ * Clear space kept between two breeds, in ems of their own size — the same
+ * one-em separation the card has always put between two pets. Without it a
+ * pair of long breeds is merely shrunk until they touch, and the line reads as
+ * one word again, which is the very thing the columns are for.
+ */
+const BREED_SEPARATION = 1;
+
+/**
+ * The largest the breeds can be set without one reaching the next, or the
+ * outermost reaching the edge of the block. Every constraint is linear in the
+ * size, so each is a straight division and the answer is the smallest of them.
+ */
+function breedSize(breeds: Measured[], axes: number[], block: Block): number {
+  const caps: number[] = [TYPE.breed.size];
+  const half = (i: number) => inkWidth(breeds[i] ?? EMPTY_MEASURE) / 2;
+  const n = axes.length;
+
+  if (half(0) > 0) caps.push((axes[0] - block.left) / half(0));
+  if (half(n - 1) > 0) {
+    caps.push((block.left + block.width - axes[n - 1]) / half(n - 1));
+  }
+  for (let i = 0; i < n - 1; i++) {
+    const together = half(i) + half(i + 1);
+    if (together > 0) {
+      caps.push((axes[i + 1] - axes[i]) / (together + BREED_SEPARATION));
+    }
+  }
+  return Math.max(0, Math.min(...caps));
+}
+
+/** Where to start drawing a string so its ink centre lands on `axis`. */
+export const inkCentred = (m: Measured, axis: number, size: number) =>
+  axis - inkMid(m) * size;
+
+/**
+ * How far a string has to slide, in ems, to be centred on its INK rather than
+ * on its advance box — what a renderer that centres by advance (CSS, or the
+ * arithmetic in `drawRuns`) has to add.
+ *
+ * A Japanese glyph is drawn inside a full-width em and carries whatever is
+ * left over as side bearings, and those differ wildly from glyph to glyph —
+ * the ト that opens トイプードル hangs 0.30 em of empty space off its left,
+ * where the ペ that opens ペコ hangs 0.04. Centring the advance box therefore
+ * leaves two lines on visibly different axes.
+ */
+export const inkOffset = (m: Measured) => m.advance / 2 - inkMid(m);
 
 /* ------------------------------------------------------------------ *
  * Unit helpers (so neither renderer restates a number)

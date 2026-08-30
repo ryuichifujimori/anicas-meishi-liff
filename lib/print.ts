@@ -16,14 +16,17 @@ import {
   PRINT_FONTS,
   TEMPLATE_PX,
   TYPE,
-  type SpreadLine,
+  type Measured,
   type TypeSpec,
   type TypeWeight,
+  EMPTY_MEASURE,
+  cardGlyphs,
   cardText,
   clampSpread,
-  fittedSize,
+  inkCentred,
+  inkOffset,
+  layoutPets,
   mmToPt,
-  petGap,
   spreadLimits,
 } from "./meishi-layout";
 
@@ -135,7 +138,7 @@ export async function generateMeishiPrintPdf(
       ? embedPhoto(pdf, input.composedPhoto, slot, options)
       : null,
     input.qr ? embedArtwork(pdf, ASSETS.logo) : null,
-    loadFonts(pdf, Object.values(text).flat().join("")),
+    loadFonts(pdf, cardGlyphs(text)),
   ]);
 
   // Same paint order as MeishiPreview: template → photo → ribbon → text → QR.
@@ -162,31 +165,49 @@ export async function generateMeishiPrintPdf(
   // edge — the reason the photo slot is allowed to run past the band's top.
   placeCard(ribbon);
 
-  // How far the bar was allowed to travel depends on the words themselves, so
-  // it is worked out again here against the font going into the PDF — the same
-  // rule the preview applies to the font on screen. A value saved when the
-  // names were shorter is brought back inside range rather than pushing the
-  // type out of its block.
-  const spread = clampSpread(
-    input.nameSpread,
-    spreadLimits([
-      measuredLine(fonts, TYPE.breed, text.breeds, true),
-      measuredLine(fonts, TYPE.name, text.names),
-    ]),
+  // The columns are worked out here against the font going into the PDF, by
+  // the same functions the preview runs against the font on screen. A bar
+  // value saved when the names were shorter is brought back inside range
+  // rather than pushing the type out of its block.
+  const measured = (weight: TypeSpec, value: string) =>
+    measureRun(fonts[weight.weight], value);
+  const names = text.pets.map((pet) => measured(TYPE.name, pet.name));
+  const breeds = text.pets.map((pet) => measured(TYPE.breed, pet.breed));
+  const columns = layoutPets(
+    names,
+    breeds,
+    clampSpread(input.nameSpread, spreadLimits(names)),
   );
+  const column = (
+    measures: Measured[],
+    size: number,
+    value: (pet: (typeof text.pets)[number]) => string,
+  ) => ({
+    size,
+    items: text.pets.map((pet, i) => ({
+      text: value(pet),
+      x: inkCentred(measures[i], columns.axes[i], size),
+    })),
+  });
 
   drawRuns(page, {
     block: box(card, LAYOUT.textBlock),
     align: "center",
+    cardX: card.x,
     cardWidth: card.width,
     pageHeight: pageH,
     fonts,
     lib,
-    spread,
     runs: [
-      { spec: TYPE.breed, parts: text.breeds, fit: true },
-      { spec: TYPE.name, parts: text.names },
-      { spec: TYPE.owner, parts: [text.owner] },
+      {
+        spec: TYPE.breed,
+        columns: column(breeds, columns.breedSize, (pet) => pet.breed),
+      },
+      {
+        spec: TYPE.name,
+        columns: column(names, columns.nameSize, (pet) => pet.name),
+      },
+      { spec: TYPE.owner, text: text.owner },
     ],
   });
 
@@ -195,12 +216,12 @@ export async function generateMeishiPrintPdf(
     align: "left",
     cardWidth: card.width,
     pageHeight: pageH,
+    cardX: card.x,
     fonts,
     lib,
-    spread,
     runs: [
-      { spec: TYPE.igName, parts: [text.igName] },
-      { spec: TYPE.igHandle, parts: [text.igHandle] },
+      { spec: TYPE.igName, text: text.igName },
+      { spec: TYPE.igHandle, text: text.igHandle },
     ],
   });
 
@@ -492,8 +513,8 @@ function anchor(
 
 /**
  * The slice of fontkit's API this module uses. `@pdf-lib/fontkit` ships no
- * type declarations, and pdf-lib's own `PDFFont` exposes advance widths but
- * not the glyph outlines the ink measurements below need.
+ * type declarations, and pdf-lib's own `PDFFont` gives advance widths but not
+ * the glyph outlines the ink measurements need.
  */
 type FontkitFont = {
   unitsPerEm: number;
@@ -503,16 +524,12 @@ type FontkitFont = {
   };
 };
 
-/** Side bearings: the empty space a glyph carries either side of its ink,
- *  as a fraction of the em. */
-type Bearings = { lsb: number; rsb: number };
-
-/** One embedded font file — what pdf-lib draws with, plus the metrics it
- *  does not expose. */
+/** One embedded font file — what pdf-lib draws with, plus the metrics it does
+ *  not expose. `ink` is in ems, measured from the point the text is drawn. */
 type Face = {
   pdf: PDFFont;
   covers(codePoint: number): boolean;
-  bearings(ch: string): Bearings;
+  ink(text: string): { inkLeft: number; inkRight: number };
 };
 
 /** One weight, plus whatever is needed for characters it does not carry. */
@@ -538,16 +555,23 @@ async function loadFonts(pdf: PDFDocument, text: string): Promise<Fonts> {
     return {
       pdf: await pdf.embedFont(bytes, { subset: true }),
       covers: (codePoint) => metrics.hasGlyphForCodePoint(codePoint),
-      bearings: (ch) => {
-        const glyph = metrics.layout(ch).glyphs[0];
-        const box = glyph?.bbox;
-        // A glyph with no ink — a space — reports an empty box.
-        if (!box || !Number.isFinite(box.minX) || !Number.isFinite(box.maxX)) {
-          return { lsb: 0, rsb: 0 };
+      ink: (run) => {
+        let x = 0;
+        let left = Infinity;
+        let right = -Infinity;
+        for (const glyph of metrics.layout(run).glyphs) {
+          const box = glyph.bbox;
+          if (box && Number.isFinite(box.minX) && Number.isFinite(box.maxX)) {
+            left = Math.min(left, x + box.minX);
+            right = Math.max(right, x + box.maxX);
+          }
+          x += glyph.advanceWidth;
         }
+        // A run with no ink at all — a space — has nothing to centre on.
+        if (!Number.isFinite(left)) return { inkLeft: 0, inkRight: x / metrics.unitsPerEm };
         return {
-          lsb: box.minX / metrics.unitsPerEm,
-          rsb: (glyph.advanceWidth - box.maxX) / metrics.unitsPerEm,
+          inkLeft: left / metrics.unitsPerEm,
+          inkRight: right / metrics.unitsPerEm,
         };
       },
     };
@@ -568,81 +592,73 @@ async function loadFonts(pdf: PDFDocument, text: string): Promise<Fonts> {
 }
 
 /**
- * One run of the card's type: the pets' own words, one string each, or a
- * single string for the lines that are not per-pet. A run marked `fit` is set
- * smaller, as far as it takes, rather than allowed onto a second line.
+ * One string as the embedded fonts will actually set it, in ems — the same
+ * numbers `lib/card-metrics.ts` gets from a canvas, so both renderers can be
+ * laid out by the same functions in `lib/meishi-layout.ts`.
+ *
+ * The advance comes from pdf-lib, which is what `drawText` will advance by;
+ * the ink comes from fontkit, which pdf-lib does not expose.
  */
-type Run = { spec: TypeSpec; parts: string[]; fit?: boolean };
-
-/** One line of the card measured in the font being embedded, in ems — what
- *  `spreadLimits` and `fittedSize` work from. */
-function measuredLine(
-  fonts: Fonts,
-  spec: TypeSpec,
-  parts: string[],
-  shrinks = false,
-): SpreadLine {
-  const font = fonts[spec.weight];
-  return {
-    spec,
-    widths: parts.filter(Boolean).map((part) => measure(font, part, 1)),
-    shrinks,
-  };
+function measureRun(font: FontSet, text: string): Measured {
+  if (!text) return EMPTY_MEASURE;
+  let advance = 0;
+  let inkLeft = Infinity;
+  let inkRight = -Infinity;
+  for (const piece of splitByFont(font, text)) {
+    const ink = piece.font.ink(piece.text);
+    inkLeft = Math.min(inkLeft, advance + ink.inkLeft);
+    inkRight = Math.max(inkRight, advance + ink.inkRight);
+    advance += piece.font.pdf.widthOfTextAtSize(piece.text, 1);
+  }
+  return Number.isFinite(inkLeft)
+    ? { advance, inkLeft, inkRight }
+    : { advance, inkLeft: 0, inkRight: advance };
 }
 
 /**
- * A measured piece of a line. Either a chunk of text, or — with an empty
- * `text` — the gap that holds two pets apart.
+ * One line of the card's type: either a single string flowed in the block, or
+ * one item per pet, each already placed on its own column's axis.
  */
-type Token = { text: string; width: number };
-
-const inked = (token: Token) => token.text.trim().length > 0;
+type Run = {
+  spec: TypeSpec;
+  text?: string;
+  columns?: { size: number; items: { text: string; x: number }[] };
+};
 
 /**
- * Lays out a stack of text runs the way the browser lays out the preview's
- * block children: each run gets its `marginTop`, then one line box of
- * `LINE_HEIGHT × font-size` per (wrapped) line, with the glyphs' content area
- * centred in that box via half-leading. Empty runs are skipped entirely, so an
- * absent breed or owner closes the gap exactly as it does on screen.
+ * Lays a stack of lines down the block the way the browser lays out the
+ * preview's block children: each gets its `marginTop`, then one line box of
+ * `LINE_HEIGHT × the design font size` per (wrapped) line, with the glyphs'
+ * content area centred in that box via half-leading. An empty line is skipped
+ * entirely, so an absent breed or owner closes its gap exactly as on screen.
+ *
+ * The line box is always the DESIGN size even when the glyphs have been set
+ * smaller to fit, so shrinking one line never shifts the ones below it.
  */
 function drawRuns(
   page: PDFPage,
   opts: {
     block: Box;
     align: "left" | "center";
+    /** Left edge of the card artwork on the page, which the columns' own
+     *  coordinates are measured from. */
+    cardX: number;
     cardWidth: number;
     pageHeight: number;
     fonts: Fonts;
     lib: PdfLib;
-    /** The step-4 bar, applied to every run's pet gap alike. */
-    spread: number;
     runs: Run[];
   },
 ) {
   let top = opts.block.top;
 
   for (const run of opts.runs) {
-    const parts = run.parts.filter(Boolean);
-    if (!parts.length) continue;
+    const items = run.columns?.items.filter((item) => item.text) ?? [];
+    if (!run.text && !items.length) continue;
 
     const font = opts.fonts[run.spec.weight];
     const colour = ink(opts.lib, run.spec.color);
-    const gap = petGap(run.spec, opts.spread);
-    // A fitted run comes down to whatever size holds it on one line; the gaps
-    // stay exactly as the bar set them, so it still tracks the name line.
-    const size =
-      (run.fit
-        ? fittedSize(
-            run.spec,
-            parts.map((part) => measure(font, part, 1)),
-            gap,
-            opts.block.width / opts.cardWidth,
-          )
-        : run.spec.size) * opts.cardWidth;
-    const width = (text: string) => measure(font, text, size);
-
-    // The line box keeps the height the design asks for even when the glyphs
-    // have been set smaller, so a fitted line never shifts the line below it.
+    const size = (run.columns?.size ?? run.spec.size) * opts.cardWidth;
     const lineBox = LINE_HEIGHT * run.spec.size * opts.cardWidth;
     // CSS centres the font's content area (ascent + descent) in the line box
     // and hangs the glyphs off its top.
@@ -651,109 +667,44 @@ function drawRuns(
       halfLeading + font.primary.pdf.heightAtSize(size, { descender: false });
 
     top += run.spec.marginTop * opts.cardWidth;
+    const y = opts.pageHeight - (top + baseline);
 
-    // A fitted run has been sized to hold; it must never take the second line
-    // it was sized out of.
-    const tokens = tokenise(parts, gap * opts.cardWidth, width);
-    const lines = run.fit ? [tokens] : wrapLine(tokens, opts.block.width);
-
-    for (const line of lines) {
-      let x = opts.block.x;
-      if (opts.align === "center") x += offsetToCentre(font, line, size, opts.block.width);
-
-      for (const token of line) {
-        for (const piece of splitByFont(font, token.text)) {
-          page.drawText(piece.text, {
-            x,
-            y: opts.pageHeight - (top + baseline),
-            size,
-            font: piece.font.pdf,
-            color: colour,
-          });
-          x += piece.font.pdf.widthOfTextAtSize(piece.text, size);
-        }
-        if (!token.text) x += token.width; // the gap between two pets
+    if (run.columns) {
+      for (const item of items) {
+        draw(page, font, item.text, opts.cardX + item.x * opts.cardWidth, y, size, colour);
       }
+      top += lineBox;
+      continue;
+    }
+
+    const width = (text: string) => measure(font, text, size);
+    for (const line of wrapText(width, run.text ?? "", opts.block.width)) {
+      const x =
+        opts.align === "center"
+          ? opts.block.x +
+            (opts.block.width - width(line)) / 2 +
+            inkOffset(measureRun(font, line)) * size
+          : opts.block.x;
+      draw(page, font, line, x, opts.pageHeight - (top + baseline), size, colour);
       top += lineBox;
     }
   }
 }
 
-/**
- * How far a line has to move to sit centred in its block.
- *
- * Centred on the INK, not on the advance box. A Japanese glyph is drawn inside
- * a full-width em and carries whatever is left over as side bearings, and
- * those differ wildly from glyph to glyph — the ト that opens トイプードル
- * hangs 0.30 em of empty space off its left, where the ペ that opens ペコ
- * hangs 0.04. Centring the advance box therefore leaves the breed line and the
- * name line on visibly different axes (0.44 mm apart on the real card, the
- * name reading left of the breed). Taking the two outer bearings off first is
- * what "centred" means to the eye, and it is the same rule the preview
- * follows, so the two agree.
- */
-function offsetToCentre(
+/** Puts one string down, switching face wherever the primary cannot set it. */
+function draw(
+  page: PDFPage,
   font: FontSet,
-  line: Token[],
+  text: string,
+  x: number,
+  y: number,
   size: number,
-  blockWidth: number,
-): number {
-  const advance = line.reduce((total, token) => total + token.width, 0);
-  const marks = line.filter(inked);
-  if (!marks.length) return (blockWidth - advance) / 2;
-
-  const first = Array.from(marks[0].text.trimStart())[0];
-  const tail = Array.from(marks[marks.length - 1].text.trimEnd());
-  const last = tail[tail.length - 1];
-  const lsb = pickFont(font, first).bearings(first).lsb * size;
-  const rsb = pickFont(font, last).bearings(last).rsb * size;
-
-  return (blockWidth - advance) / 2 - (lsb - rsb) / 2;
-}
-
-/**
- * Cuts a run into the pieces a line may be broken between, each measured: the
- * break-segments of every part, with the gap between two pets standing as a
- * piece of its own.
- */
-function tokenise(
-  parts: string[],
-  gap: number,
-  width: (text: string) => number,
-): Token[] {
-  const out: Token[] = [];
-  for (const part of parts) {
-    if (out.length) out.push({ text: "", width: gap });
-    for (const seg of segments(part)) out.push({ text: seg, width: width(seg) });
+  colour: ReturnType<typeof ink>,
+) {
+  for (const piece of splitByFont(font, text)) {
+    page.drawText(piece.text, { x, y, size, font: piece.font.pdf, color: colour });
+    x += piece.font.pdf.widthOfTextAtSize(piece.text, size);
   }
-  return out;
-}
-
-/** Greedy line breaking. A single unbreakable piece wider than the box
- *  overflows rather than being split, matching `overflow-wrap: normal`. */
-function wrapLine(tokens: Token[], maxWidth: number): Token[][] {
-  // Trailing blanks — a space, or the gap a break has just swallowed — do not
-  // count towards the line's width, exactly as a trailing space does not.
-  const trim = (line: Token[]) => {
-    const end = line.reduce((last, t, i) => (inked(t) ? i : last), -1);
-    return line.slice(0, end + 1);
-  };
-  const widthOf = (line: Token[]) =>
-    trim(line).reduce((total, t) => total + t.width, 0);
-
-  const lines: Token[][] = [];
-  let line: Token[] = [];
-  for (const token of tokens) {
-    if (line.length && widthOf([...line, token]) > maxWidth) {
-      lines.push(trim(line));
-      line = inked(token) ? [token] : [];
-    } else {
-      line.push(token);
-    }
-  }
-  const last = trim(line);
-  if (last.length) lines.push(last);
-  return lines;
 }
 
 /** The face that can set a given character: the run's own, or the fallback. */
@@ -808,6 +759,29 @@ function segments(text: string): string[] {
   }
   if (buf) out.push(buf);
   return out;
+}
+
+/** Greedy line breaking. A single unbreakable chunk wider than the box
+ *  overflows rather than being split, matching `overflow-wrap: normal`. */
+function wrapText(
+  width: (text: string) => number,
+  text: string,
+  maxWidth: number,
+): string[] {
+  const parts = segments(text);
+  const lines: string[] = [];
+  let line = "";
+  for (const part of parts) {
+    const candidate = line + part;
+    if (line && width(candidate.trimEnd()) > maxWidth) {
+      lines.push(line.trimEnd());
+      line = part.trimStart();
+    } else {
+      line = candidate;
+    }
+  }
+  if (line.trimEnd()) lines.push(line.trimEnd());
+  return lines.length ? lines : [text];
 }
 
 /* ------------------------------------------------------------------ *
