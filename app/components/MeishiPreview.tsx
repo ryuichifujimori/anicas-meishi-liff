@@ -8,17 +8,22 @@ import {
   type AdjustKey,
   type CardRect,
   type FaceAdjust,
+  type MeasureRun,
+  type PlacedRow,
   type PlacedRun,
   type ResolvedCard,
   resolveCard,
 } from "@/lib/card-adjust";
 import {
   ASSETS,
-  IG_MARK,
+  IG_MARK_COVER,
+  LAYOUT,
+  LINE_HEIGHT,
   TEMPLATE_ASPECT,
   cardText,
   cqw,
   hToW,
+  inkOffset,
   pct,
   wToH,
 } from "@/lib/meishi-layout";
@@ -67,8 +72,9 @@ export function MeishiPreview({
   onAdjustChange,
 }: Props) {
   const measure = useMeasureRun();
+  const text = cardText({ pets, petCount, ownerName, igName, igHandle });
   const card = resolveCard({
-    text: cardText({ pets, petCount, ownerName, igName, igHandle }),
+    text,
     measure,
     adjust,
     hasPhoto: Boolean(composedPhoto),
@@ -121,12 +127,26 @@ export function MeishiPreview({
             covered over here and the same pixels are placed again below, at
             wherever the line went. Untouched, neither of these exists and the
             card is the card it always was. */}
-        {card.ig.mark && <div className="absolute bg-white" style={frame(MARK_BOX)} />}
+        {card.ig.mark && <div className="absolute bg-white" style={frame(COVER_BOX)} />}
 
-        {/* Pet columns (breed above name), then the owner line under them */}
-        <Run run={card.breed} />
-        <Run run={card.name} />
-        <Run run={card.owner} />
+        {/* The pet text block: the breed row, the name row and the owner line,
+            stacked exactly as the design stacks them. The two rows keep their
+            BOXES in that stack however far the talent moves the words inside
+            them, so the owner — which is not hers to move — cannot be pushed
+            about by anything done above it. */}
+        <div
+          className="absolute text-center"
+          style={{
+            top: pct(LAYOUT.textBlock.top),
+            left: pct(LAYOUT.textBlock.left),
+            width: pct(LAYOUT.textBlock.width),
+            lineHeight: LINE_HEIGHT,
+          }}
+        >
+          <PetRow row={card.breed} />
+          <PetRow row={card.name} />
+          <OwnerLine run={card.owner} text={text.owner} measure={measure} />
+        </div>
 
         {card.ig.mark && (
           // eslint-disable-next-line @next/next/no-img-element
@@ -136,10 +156,24 @@ export function MeishiPreview({
           <Run key={i} run={run} />
         ))}
 
-        {/* QR code, bottom-right (square) */}
+        {/* QR code, bottom-right. Its height is left to `aspect-ratio` rather
+            than stated as a percentage of the card: the QR is square by
+            construction, and a percentage of the card's height lands a
+            sixteenth of a pixel away from a percentage of its width, which is
+            enough to resample the code differently. */}
         {qrSrc && (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={qrSrc} alt="QR" className="absolute" style={frame(card.qr)} />
+          <img
+            src={qrSrc}
+            alt="QR"
+            className="absolute"
+            style={{
+              left: pct(card.qr.x),
+              top: pct(card.qr.y),
+              width: pct(card.qr.width),
+              aspectRatio: "1 / 1",
+            }}
+          />
         )}
       </div>
 
@@ -152,16 +186,58 @@ export function MeishiPreview({
   );
 }
 
-/** Where the template draws the Instagram glyph, as a card rectangle. */
-const MARK_BOX: CardRect = {
-  x: IG_MARK.left,
-  y: IG_MARK.top,
-  width: IG_MARK.width,
-  height: IG_MARK.height,
+/** What paints the template's own Instagram glyph out, as a card rectangle. */
+const COVER_BOX: CardRect = {
+  x: IG_MARK_COVER.left,
+  y: IG_MARK_COVER.top,
+  width: IG_MARK_COVER.width,
+  height: IG_MARK_COVER.height,
 };
 
-/** One run of type: each line exactly where `lib/card-adjust.ts` put it, so
- *  nothing is left for CSS to flow, centre or break. */
+/**
+ * One pet row — the breeds, or the names — inside the text block.
+ *
+ * The row's box stays where the design's flow puts it and keeps the design's
+ * height; the words inside it are placed by `lib/card-adjust.ts`, offset from
+ * that box by however far the talent has taken them.
+ */
+function PetRow({ row }: { row: PlacedRow }) {
+  if (!row.lines.length) return null;
+
+  const style: CSSProperties = {
+    position: "relative",
+    height: cqw(LINE_HEIGHT * row.spec.size),
+  };
+  if (row.spec.marginTop) style.marginTop = cqw(row.spec.marginTop);
+
+  return (
+    <div style={style}>
+      {row.lines.map((line, i) => {
+        const shift = hToW(line.top - row.designTop);
+        return (
+          <span
+            key={i}
+            style={{
+              position: "absolute",
+              top: shift ? cqw(shift) : 0,
+              left: cqw(line.x - LAYOUT.textBlock.left),
+              fontSize: cqw(row.size),
+              lineHeight: cqw(row.lineBox),
+              fontWeight: row.spec.weight,
+              color: row.spec.color,
+              whiteSpace: "nowrap",
+            }}
+          >
+            {line.text}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+/** One run of type placed straight onto the card: each line exactly where
+ *  `lib/card-adjust.ts` put it, with nothing left for CSS to flow or break. */
 function Run({ run }: { run: PlacedRun }) {
   if (!run.lines.length) return null;
   return (
@@ -185,6 +261,39 @@ function Run({ run }: { run: PlacedRun }) {
       ))}
     </>
   );
+}
+
+/**
+ * The owner line — the one run on the card the talent cannot pick up.
+ *
+ * It flows under the two pet rows inside the text block, centred by CSS and
+ * nudged onto its ink, exactly as it always has. The print file places it from
+ * `run.lines` instead, where `lib/card-adjust.ts` has centred it on the same
+ * ink by the same rule — but on screen a computed centre and a CSS one
+ * disagree in the last sixteenth of a pixel, which is enough to redraw the
+ * line, and a card nobody has touched has to come out of here unchanged.
+ */
+function OwnerLine({
+  run,
+  text,
+  measure,
+}: {
+  run: PlacedRun;
+  text: string;
+  measure: MeasureRun;
+}) {
+  if (!text) return null;
+
+  const style: CSSProperties = {
+    fontSize: cqw(run.size),
+    fontWeight: run.spec.weight,
+    color: run.spec.color,
+  };
+  if (run.spec.marginTop) style.marginTop = cqw(run.spec.marginTop);
+  const shift = inkOffset(measure(run.spec, text));
+  if (shift) style.transform = `translateX(${shift}em)`;
+
+  return <div style={style}>{text}</div>;
 }
 
 /** A card rectangle as the CSS that puts a box exactly there. */

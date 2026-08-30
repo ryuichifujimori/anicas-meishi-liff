@@ -7,7 +7,7 @@ import {
   ASSETS,
   BLEED_MM,
   CARD_TRIM_MM,
-  IG_MARK,
+  IG_MARK_COVER,
   PAGE_MM,
   PAPER_COLOR,
   PRINT_DPI,
@@ -189,10 +189,10 @@ export async function generateMeishiPrintPdf(
   // the line went; untouched, neither happens and this file is never fetched.
   if (placed.ig.mark) {
     const cover = place(card, {
-      x: IG_MARK.left,
-      y: IG_MARK.top,
-      width: IG_MARK.width,
-      height: IG_MARK.height,
+      x: IG_MARK_COVER.left,
+      y: IG_MARK_COVER.top,
+      width: IG_MARK_COVER.width,
+      height: IG_MARK_COVER.height,
     });
     page.drawRectangle({
       x: cover.x,

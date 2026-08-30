@@ -171,6 +171,25 @@ export const IG_MARK = {
 } as const;
 
 /**
+ * The box that paints the baked glyph out — the ink box with a few of the
+ * template's own white pixels taken with it.
+ *
+ * Painted flush to the ink, the patch's edges land mid-pixel on both the
+ * screen and the printed page, and the outermost column of the glyph survives
+ * as a hairline down the card. The template is pure white for 40 px in every
+ * direction here, so the patch can simply reach past the ink and be done with
+ * it.
+ */
+const COVER_BLEED_PX = 3;
+
+export const IG_MARK_COVER = {
+  left: (69 - COVER_BLEED_PX) / TEMPLATE_PX.width,
+  top: (1464 - COVER_BLEED_PX) / TEMPLATE_PX.height,
+  width: (103 + COVER_BLEED_PX * 2) / TEMPLATE_PX.width,
+  height: (102 + COVER_BLEED_PX * 2) / TEMPLATE_PX.height,
+} as const;
+
+/**
  * Aspect ratio (w / h) of the card's photo slot. The framing editor composes
  * onto a canvas of exactly this shape, so what the talent frames there is what
  * `object-fit: cover` shows on the card — with no second crop.

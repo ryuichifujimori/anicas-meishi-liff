@@ -77,12 +77,6 @@ export const untouchedFace = (): FaceAdjust =>
 
 export const untouchedCard = (): CardAdjust => ({ front: untouchedFace() });
 
-/** True while every part is still exactly where the design put it. */
-export const isUntouched = (face: FaceAdjust) =>
-  ADJUSTABLE.every(
-    (key) => !face[key].dx && !face[key].dy && face[key].scale === 1,
-  );
-
 /* ------------------------------------------------------------------ *
  * Rectangles
  * ------------------------------------------------------------------ */
@@ -104,19 +98,19 @@ const slack = (start: number, size: number, from: number, to: number) => ({
 /**
  * Brings one part's change inside what the card allows: the box may not leave
  * the trimmed card, the photo may not drop below the ribbon's band, and the
- * scale is held between the floors in `scaleRange` and the largest size that
- * still fits. Clamping happens HERE rather than in the drag handler, so a
+ * scale is held between `floor` and the largest size that still fits inside
+ * those bounds. Clamping happens HERE rather than in the drag handler, so a
  * value that arrives from a stored payload is held to the same rules as one
  * being dragged right now.
  */
 export function clampAdjust(
   base: CardRect,
   adjust: Adjust,
-  range: ScaleRange,
+  floor: number,
   bounds: Bounds,
 ): Adjust {
   const fit = Math.min(1 / base.width, (bounds.bottom - bounds.top) / base.height);
-  const scale = Math.min(Math.max(adjust.scale, range.min), Math.min(range.max, fit));
+  const scale = Math.min(Math.max(adjust.scale, floor), fit);
 
   const scaled = resize(base, scale);
   const x = slack(scaled.x, scaled.width, 0, 1);
@@ -148,10 +142,14 @@ export type Bounds = { top: number; bottom: number };
 const boundsFor = (key: AdjustKey): Bounds =>
   key === "photo" ? { top: 0, bottom: RIBBON_BAND.bottom } : { top: 0, bottom: 1 };
 
-export type ScaleRange = { min: number; max: number };
+/**
+ * How far each part may be SHRUNK, as a multiple of the size the design gives
+ * it. There is no ceiling to state: how far a part can be grown is decided by
+ * the card's own edges, in `clampAdjust`.
+ */
 
-/** No floor of its own: the card's edges are the only limit. */
-const FREE_SCALE: ScaleRange = { min: 0, max: Infinity };
+/** Nothing of its own to hold it up — only the card's edges. */
+const NO_FLOOR = 0;
 
 /**
  * How far a row of type may be shrunk before it stops being printable.
@@ -161,10 +159,7 @@ const FREE_SCALE: ScaleRange = { min: 0, max: Infinity };
  * come down to it; one the fitting rules have already pushed below it may not
  * be shrunk at all.
  */
-const typeScale = (size: number): ScaleRange => ({
-  min: Math.min(1, size ? MIN_TYPE_SIZE / size : 1),
-  max: Infinity,
-});
+const typeFloor = (size: number) => Math.min(1, size ? MIN_TYPE_SIZE / size : 1);
 
 /**
  * How far the QR may be shrunk before a phone stops reading it: the point
@@ -173,9 +168,9 @@ const typeScale = (size: number): ScaleRange => ({
  * built — so a denser QR (a longer handle) is allowed less shrink than a
  * sparse one, automatically.
  */
-const qrScale = (pitch: number): ScaleRange => {
+const qrFloor = (pitch: number) => {
   const moduleMm = LAYOUT.qr.width * CARD_TRIM_MM.width * pitch;
-  return { min: moduleMm ? Math.min(1, MIN_QR_MODULE_MM / moduleMm) : 1, max: Infinity };
+  return moduleMm ? Math.min(1, MIN_QR_MODULE_MM / moduleMm) : 1;
 };
 
 /**
@@ -184,7 +179,7 @@ const qrScale = (pitch: number): ScaleRange => {
  * card's portrait, and a drag that overshoots would otherwise collapse it to
  * nothing.
  */
-const PHOTO_SCALE: ScaleRange = { min: 0.5, max: Infinity };
+const PHOTO_FLOOR = 0.5;
 
 /* ------------------------------------------------------------------ *
  * Where everything lands
@@ -212,10 +207,18 @@ export type PlacedRun = {
 /** A part of the card the talent can grab, with the box its frame is drawn on. */
 export type Placed<T> = T & { rect: CardRect };
 
+/**
+ * One of the two pet rows: where it ended up, and where the design's own flow
+ * had put it. The preview leaves the row's BOX in that flow — so the owner
+ * line under it cannot be shifted by anything done to the rows above — and
+ * moves only the words inside it.
+ */
+export type PlacedRow = Placed<PlacedRun> & { designTop: number };
+
 export type ResolvedCard = {
   photo: CardRect;
-  breed: Placed<PlacedRun>;
-  name: Placed<PlacedRun>;
+  breed: PlacedRow;
+  name: PlacedRow;
   owner: PlacedRun;
   ig: Placed<{ runs: PlacedRun[]; mark: CardRect | null }>;
   qr: CardRect;
@@ -367,14 +370,14 @@ export function resolveCard(input: ResolveInput): ResolvedCard {
     qr: input.qrPitch !== null,
   };
 
-  const ranges: Record<AdjustKey, ScaleRange> = {
-    photo: PHOTO_SCALE,
-    breed: typeScale(breed.size),
-    name: typeScale(name.size),
+  const floors: Record<AdjustKey, number> = {
+    photo: PHOTO_FLOOR,
+    breed: typeFloor(breed.size),
+    name: typeFloor(name.size),
     // The Instagram block is one part, so it is held up by whichever of its
     // two lines would hit the floor first.
-    ig: typeScale(Math.min(TYPE.igName.size, TYPE.igHandle.size)),
-    qr: input.qrPitch === null ? FREE_SCALE : qrScale(input.qrPitch),
+    ig: typeFloor(Math.min(TYPE.igName.size, TYPE.igHandle.size)),
+    qr: input.qrPitch === null ? NO_FLOOR : qrFloor(input.qrPitch),
   };
 
   /* ---- and where each of them actually ends up ---- */
@@ -386,7 +389,7 @@ export function resolveCard(input: ResolveInput): ResolvedCard {
     const rect = base[key];
     const usable = grabbable[key] && rect.width > 0 && rect.height > 0;
     clamp[key] = usable
-      ? (a: Adjust) => clampAdjust(rect, a, ranges[key], boundsFor(key))
+      ? (a: Adjust) => clampAdjust(rect, a, floors[key], boundsFor(key))
       : () => ({ ...NO_ADJUST });
     moves[key] = usable ? move(rect, clamp[key](adjust[key])) : IDENTITY_MOVE;
     frames[key] = usable ? moves[key].rect(rect) : null;
@@ -394,8 +397,8 @@ export function resolveCard(input: ResolveInput): ResolvedCard {
 
   return {
     photo: moves.photo.rect(photoRect),
-    breed: { ...moves.breed.run(breed), rect: base.breed },
-    name: { ...moves.name.run(name), rect: base.name },
+    breed: { ...moves.breed.run(breed), rect: base.breed, designTop: breed.lines[0]?.top ?? 0 },
+    name: { ...moves.name.run(name), rect: base.name, designTop: name.lines[0]?.top ?? 0 },
     owner,
     ig: {
       runs: igRuns.map((run) => moves.ig.run(run)),
