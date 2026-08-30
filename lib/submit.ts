@@ -18,6 +18,7 @@ export function toPrintInput(form: FormData): MeishiPrintInput {
     qr: form.qr,
     pets: form.pets,
     petCount: form.petCount,
+    nameSpread: form.nameSpread,
     igHandle: form.ig_handle,
     igName: form.ig_name,
     ownerName: form.owner_name,
@@ -46,6 +47,7 @@ export async function buildSubmitPayload(
     })),
     photo_base64: form.composedPhoto,
     print_base64,
+    name_spread: form.nameSpread,
     line_user_id: lineUserId,
   };
 }

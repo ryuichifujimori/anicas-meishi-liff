@@ -16,10 +16,18 @@ import {
   PRINT_FONTS,
   TEMPLATE_PX,
   TYPE,
+  type Measured,
   type TypeSpec,
   type TypeWeight,
+  EMPTY_MEASURE,
+  cardGlyphs,
   cardText,
+  clampSpread,
+  inkCentred,
+  inkOffset,
+  layoutPets,
   mmToPt,
+  spreadLimits,
 } from "./meishi-layout";
 
 /**
@@ -29,15 +37,17 @@ import {
  * `lib/meishi-layout.ts` definition, onto a 61 × 97 mm page (55 × 91 mm card
  * + 3 mm bleed) — but as a real PDF rather than as one flattened raster:
  *
- *   template / ribbon  vector outlines, placed from public/meishi-*.pdf
+ *   template / ribbon  the design's own PNGs, embedded whole (≈483 dpi there)
  *   text               live text in an embedded font, selectable and searchable
  *   QR                 the module shapes drawn as paths
  *   anicas mark        the 500 × 500 master, embedded whole and scaled down
- *   photo              the only image, resampled to 350 dpi
+ *   photo              resampled to 350 dpi
  *
- * so nothing but the photograph carries a pixel grid — which is how the real
- * Illustrator card is built, and where the difference in crispness was coming
- * from.
+ * The talent's own words are the part that has to stay sharp at any size, and
+ * they are the part that is type. The drawn design is left as the pixels it
+ * was drawn as: tracing it into outlines put a staircase along every curve of
+ * the paw prints, the Instagram glyph and the ribbon's caption, because a
+ * trace can only follow the pixel grid it is given.
  *
  * This module is deliberately standalone: it takes plain data, touches no
  * React state and is not tied to the submit button, so the same call can be
@@ -51,6 +61,11 @@ export type MeishiPrintInput = {
   qr: MeishiQr | null;
   pets: Pet[];
   petCount: 1 | 2 | 3;
+  /**
+   * The step-4 bar: how much to add to the gap between two pets, as a fraction
+   * of the card width. 0 is the card as designed.
+   */
+  nameSpread: number;
   igHandle: string;
   igName: string;
   ownerName: string;
@@ -117,18 +132,18 @@ export async function generateMeishiPrintPdf(
   });
 
   const [template, ribbon, photo, logo, fonts] = await Promise.all([
-    embedVector(pdf, ASSETS.templateVector),
-    embedVector(pdf, ASSETS.ribbonVector),
+    embedArtwork(pdf, ASSETS.template),
+    embedArtwork(pdf, ASSETS.ribbon),
     input.composedPhoto
       ? embedPhoto(pdf, input.composedPhoto, slot, options)
       : null,
-    input.qr ? embedLogo(pdf) : null,
-    loadFonts(pdf, Object.values(text).join("")),
+    input.qr ? embedArtwork(pdf, ASSETS.logo) : null,
+    loadFonts(pdf, cardGlyphs(text)),
   ]);
 
   // Same paint order as MeishiPreview: template → photo → ribbon → text → QR.
-  const placeCard = (art: typeof template) =>
-    page.drawPage(art, {
+  const placeCard = (art: PDFImage) =>
+    page.drawImage(art, {
       x: card.x,
       y: pageH - card.top - card.height,
       width: card.width,
@@ -150,16 +165,48 @@ export async function generateMeishiPrintPdf(
   // edge — the reason the photo slot is allowed to run past the band's top.
   placeCard(ribbon);
 
+  // The columns are worked out here against the font going into the PDF, by
+  // the same functions the preview runs against the font on screen. A bar
+  // value saved when the names were shorter is brought back inside range
+  // rather than pushing the type out of its block.
+  const measured = (weight: TypeSpec, value: string) =>
+    measureRun(fonts[weight.weight], value);
+  const names = text.pets.map((pet) => measured(TYPE.name, pet.name));
+  const breeds = text.pets.map((pet) => measured(TYPE.breed, pet.breed));
+  const columns = layoutPets(
+    names,
+    breeds,
+    clampSpread(input.nameSpread, spreadLimits(names)),
+  );
+  const column = (
+    measures: Measured[],
+    size: number,
+    value: (pet: (typeof text.pets)[number]) => string,
+  ) => ({
+    size,
+    items: text.pets.map((pet, i) => ({
+      text: value(pet),
+      x: inkCentred(measures[i], columns.axes[i], size),
+    })),
+  });
+
   drawRuns(page, {
     block: box(card, LAYOUT.textBlock),
     align: "center",
+    cardX: card.x,
     cardWidth: card.width,
     pageHeight: pageH,
     fonts,
     lib,
     runs: [
-      { spec: TYPE.breed, text: text.breeds },
-      { spec: TYPE.name, text: text.names },
+      {
+        spec: TYPE.breed,
+        columns: column(breeds, columns.breedSize, (pet) => pet.breed),
+      },
+      {
+        spec: TYPE.name,
+        columns: column(names, columns.nameSize, (pet) => pet.name),
+      },
       { spec: TYPE.owner, text: text.owner },
     ],
   });
@@ -169,6 +216,7 @@ export async function generateMeishiPrintPdf(
     align: "left",
     cardWidth: card.width,
     pageHeight: pageH,
+    cardX: card.x,
     fonts,
     lib,
     runs: [
@@ -258,15 +306,16 @@ async function fetchBytes(url: string): Promise<Uint8Array> {
   return new Uint8Array(await res.arrayBuffer());
 }
 
-/** Places a single-page vector PDF as a form XObject — outlines, no pixels. */
-async function embedVector(pdf: PDFDocument, url: string) {
-  const [embedded] = await pdf.embedPdf(await fetchBytes(url));
-  return embedded;
-}
-
-/** The anicas mark, embedded at its native 500 × 500 and scaled on the page. */
-async function embedLogo(pdf: PDFDocument): Promise<PDFImage> {
-  return pdf.embedPng(await fetchBytes(ASSETS.logo));
+/**
+ * A piece of the drawn design, embedded byte-for-byte as the PNG it is.
+ *
+ * No trace, no resample, no re-encode: the file that goes into the PDF is the
+ * file the designer drew, placed at whatever size the card wants it. The
+ * template and ribbon land at ≈483 dpi that way and the anicas mark far
+ * higher, so none of them needs the pixel grid the photo has to live with.
+ */
+async function embedArtwork(pdf: PDFDocument, url: string): Promise<PDFImage> {
+  return pdf.embedPng(await fetchBytes(url));
 }
 
 /**
@@ -462,12 +511,29 @@ function anchor(
  * Text
  * ------------------------------------------------------------------ */
 
-/** One weight, plus whatever is needed for characters it does not carry. */
-type FontSet = {
-  primary: PDFFont;
-  covers: (codePoint: number) => boolean;
-  fallback?: PDFFont;
+/**
+ * The slice of fontkit's API this module uses. `@pdf-lib/fontkit` ships no
+ * type declarations, and pdf-lib's own `PDFFont` gives advance widths but not
+ * the glyph outlines the ink measurements need.
+ */
+type FontkitFont = {
+  unitsPerEm: number;
+  hasGlyphForCodePoint(codePoint: number): boolean;
+  layout(text: string): {
+    glyphs: { advanceWidth: number; bbox?: { minX: number; maxX: number } }[];
+  };
 };
+
+/** One embedded font file — what pdf-lib draws with, plus the metrics it does
+ *  not expose. `ink` is in ems, measured from the point the text is drawn. */
+type Face = {
+  pdf: PDFFont;
+  covers(codePoint: number): boolean;
+  ink(text: string): { inkLeft: number; inkRight: number };
+};
+
+/** One weight, plus whatever is needed for characters it does not carry. */
+type FontSet = { primary: Face; fallback?: Face };
 
 type Fonts = Record<TypeWeight, FontSet>;
 
@@ -483,46 +549,100 @@ async function loadFonts(pdf: PDFDocument, text: string): Promise<Fonts> {
   const fontkit = (await import("@pdf-lib/fontkit")).default;
   const weights = Object.keys(PRINT_FONTS).map(Number) as TypeWeight[];
 
+  const face = async (url: string): Promise<Face> => {
+    const bytes = await fetchBytes(url);
+    const metrics = fontkit.create(bytes) as unknown as FontkitFont;
+    return {
+      pdf: await pdf.embedFont(bytes, { subset: true }),
+      covers: (codePoint) => metrics.hasGlyphForCodePoint(codePoint),
+      ink: (run) => {
+        let x = 0;
+        let left = Infinity;
+        let right = -Infinity;
+        for (const glyph of metrics.layout(run).glyphs) {
+          const box = glyph.bbox;
+          if (box && Number.isFinite(box.minX) && Number.isFinite(box.maxX)) {
+            left = Math.min(left, x + box.minX);
+            right = Math.max(right, x + box.maxX);
+          }
+          x += glyph.advanceWidth;
+        }
+        // A run with no ink at all — a space — has nothing to centre on.
+        if (!Number.isFinite(left)) return { inkLeft: 0, inkRight: x / metrics.unitsPerEm };
+        return {
+          inkLeft: left / metrics.unitsPerEm,
+          inkRight: right / metrics.unitsPerEm,
+        };
+      },
+    };
+  };
+
   const loaded = await Promise.all(
-    weights.map(async (weight) => {
-      const bytes = await fetchBytes(PRINT_FONTS[weight]);
-      const metrics = fontkit.create(bytes) as unknown as {
-        hasGlyphForCodePoint(codePoint: number): boolean;
-      };
-      return {
-        weight,
-        primary: await pdf.embedFont(bytes, { subset: true }),
-        covers: (codePoint: number) => metrics.hasGlyphForCodePoint(codePoint),
-      };
-    }),
+    weights.map(async (weight) => [weight, await face(PRINT_FONTS[weight])] as const),
   );
 
   const uncovered = Array.from(text).some((ch) =>
-    loaded.some(({ covers }) => !covers(ch.codePointAt(0) ?? 0)),
+    loaded.some(([, f]) => !f.covers(ch.codePointAt(0) ?? 0)),
   );
-  const fallback = uncovered
-    ? await pdf.embedFont(await fetchBytes(PRINT_FALLBACK_FONT), { subset: true })
-    : undefined;
+  const fallback = uncovered ? await face(PRINT_FALLBACK_FONT) : undefined;
 
   return Object.fromEntries(
-    loaded.map(({ weight, primary, covers }) => [weight, { primary, covers, fallback }]),
+    loaded.map(([weight, primary]) => [weight, { primary, fallback }]),
   ) as Fonts;
 }
 
-type Run = { spec: TypeSpec; text: string };
+/**
+ * One string as the embedded fonts will actually set it, in ems — the same
+ * numbers `lib/card-metrics.ts` gets from a canvas, so both renderers can be
+ * laid out by the same functions in `lib/meishi-layout.ts`.
+ *
+ * The advance comes from pdf-lib, which is what `drawText` will advance by;
+ * the ink comes from fontkit, which pdf-lib does not expose.
+ */
+function measureRun(font: FontSet, text: string): Measured {
+  if (!text) return EMPTY_MEASURE;
+  let advance = 0;
+  let inkLeft = Infinity;
+  let inkRight = -Infinity;
+  for (const piece of splitByFont(font, text)) {
+    const ink = piece.font.ink(piece.text);
+    inkLeft = Math.min(inkLeft, advance + ink.inkLeft);
+    inkRight = Math.max(inkRight, advance + ink.inkRight);
+    advance += piece.font.pdf.widthOfTextAtSize(piece.text, 1);
+  }
+  return Number.isFinite(inkLeft)
+    ? { advance, inkLeft, inkRight }
+    : { advance, inkLeft: 0, inkRight: advance };
+}
 
 /**
- * Lays out a stack of text runs the way the browser lays out the preview's
- * block children: each run gets its `marginTop`, then one line box of
- * `LINE_HEIGHT × font-size` per (wrapped) line, with the glyphs' content area
- * centred in that box via half-leading. Empty runs are skipped entirely, so an
- * absent breed or owner closes the gap exactly as it does on screen.
+ * One line of the card's type: either a single string flowed in the block, or
+ * one item per pet, each already placed on its own column's axis.
+ */
+type Run = {
+  spec: TypeSpec;
+  text?: string;
+  columns?: { size: number; items: { text: string; x: number }[] };
+};
+
+/**
+ * Lays a stack of lines down the block the way the browser lays out the
+ * preview's block children: each gets its `marginTop`, then one line box of
+ * `LINE_HEIGHT × the design font size` per (wrapped) line, with the glyphs'
+ * content area centred in that box via half-leading. An empty line is skipped
+ * entirely, so an absent breed or owner closes its gap exactly as on screen.
+ *
+ * The line box is always the DESIGN size even when the glyphs have been set
+ * smaller to fit, so shrinking one line never shifts the ones below it.
  */
 function drawRuns(
   page: PDFPage,
   opts: {
     block: Box;
     align: "left" | "center";
+    /** Left edge of the card artwork on the page, which the columns' own
+     *  coordinates are measured from. */
+    cardX: number;
     cardWidth: number;
     pageHeight: number;
     fonts: Fonts;
@@ -533,50 +653,72 @@ function drawRuns(
   let top = opts.block.top;
 
   for (const run of opts.runs) {
-    if (!run.text) continue;
+    const items = run.columns?.items.filter((item) => item.text) ?? [];
+    if (!run.text && !items.length) continue;
 
     const font = opts.fonts[run.spec.weight];
-    const size = run.spec.size * opts.cardWidth;
     const colour = ink(opts.lib, run.spec.color);
-    const width = (text: string) => measure(font, text, size);
-
-    const lineBox = LINE_HEIGHT * size;
+    const size = (run.columns?.size ?? run.spec.size) * opts.cardWidth;
+    const lineBox = LINE_HEIGHT * run.spec.size * opts.cardWidth;
     // CSS centres the font's content area (ascent + descent) in the line box
     // and hangs the glyphs off its top.
-    const halfLeading = (lineBox - font.primary.heightAtSize(size)) / 2;
+    const halfLeading = (lineBox - font.primary.pdf.heightAtSize(size)) / 2;
     const baseline =
-      halfLeading + font.primary.heightAtSize(size, { descender: false });
+      halfLeading + font.primary.pdf.heightAtSize(size, { descender: false });
 
     top += run.spec.marginTop * opts.cardWidth;
+    const y = opts.pageHeight - (top + baseline);
 
-    for (const line of wrapText(width, run.text, opts.block.width)) {
-      let x =
-        opts.align === "center"
-          ? opts.block.x + (opts.block.width - width(line)) / 2
-          : opts.block.x;
-      for (const piece of splitByFont(font, line)) {
-        page.drawText(piece.text, {
-          x,
-          y: opts.pageHeight - (top + baseline),
-          size,
-          font: piece.font,
-          color: colour,
-        });
-        x += piece.font.widthOfTextAtSize(piece.text, size);
+    if (run.columns) {
+      for (const item of items) {
+        draw(page, font, item.text, opts.cardX + item.x * opts.cardWidth, y, size, colour);
       }
+      top += lineBox;
+      continue;
+    }
+
+    const width = (text: string) => measure(font, text, size);
+    for (const line of wrapText(width, run.text ?? "", opts.block.width)) {
+      const x =
+        opts.align === "center"
+          ? opts.block.x +
+            (opts.block.width - width(line)) / 2 +
+            inkOffset(measureRun(font, line)) * size
+          : opts.block.x;
+      draw(page, font, line, x, opts.pageHeight - (top + baseline), size, colour);
       top += lineBox;
     }
   }
 }
 
+/** Puts one string down, switching face wherever the primary cannot set it. */
+function draw(
+  page: PDFPage,
+  font: FontSet,
+  text: string,
+  x: number,
+  y: number,
+  size: number,
+  colour: ReturnType<typeof ink>,
+) {
+  for (const piece of splitByFont(font, text)) {
+    page.drawText(piece.text, { x, y, size, font: piece.font.pdf, color: colour });
+    x += piece.font.pdf.widthOfTextAtSize(piece.text, size);
+  }
+}
+
+/** The face that can set a given character: the run's own, or the fallback. */
+function pickFont(font: FontSet, ch: string): Face {
+  return font.primary.covers(ch.codePointAt(0) ?? 0) || !font.fallback
+    ? font.primary
+    : font.fallback;
+}
+
 /** Splits a line into the longest runs that one font can set on its own. */
-function splitByFont(font: FontSet, line: string): { font: PDFFont; text: string }[] {
-  const pieces: { font: PDFFont; text: string }[] = [];
+function splitByFont(font: FontSet, line: string): { font: Face; text: string }[] {
+  const pieces: { font: Face; text: string }[] = [];
   for (const ch of Array.from(line)) {
-    const chosen =
-      font.covers(ch.codePointAt(0) ?? 0) || !font.fallback
-        ? font.primary
-        : font.fallback;
+    const chosen = pickFont(font, ch);
     const last = pieces[pieces.length - 1];
     if (last && last.font === chosen) last.text += ch;
     else pieces.push({ font: chosen, text: ch });
@@ -586,13 +728,13 @@ function splitByFont(font: FontSet, line: string): { font: PDFFont; text: string
 
 function measure(font: FontSet, text: string, size: number): number {
   return splitByFont(font, text).reduce(
-    (total, piece) => total + piece.font.widthOfTextAtSize(piece.text, size),
+    (total, piece) => total + piece.font.pdf.widthOfTextAtSize(piece.text, size),
     0,
   );
 }
 
 const CJK =
-  /[　-〿぀-ゟ゠-ヿ㐀-䶿一-鿿豈-﫿＀-￯]/;
+  /[　-〿぀-ゟ゠-ヿ㐀-䶿一-鿿豈-﫿＀-￯]/;
 
 /**
  * Splits text at the points a browser is allowed to break a line with the

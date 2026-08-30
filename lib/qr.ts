@@ -1,6 +1,6 @@
 "use client";
 
-import { ASSETS } from "./meishi-layout";
+import { ASSETS, LOGO_IN_DISC } from "./meishi-layout";
 
 // QR generation matching the real c-cloud (qr.c-cloud.co.jp) business-card QR,
 // which is built on qr-code-styling. We generate the QR in the browser (this
@@ -25,15 +25,20 @@ import { ASSETS } from "./meishi-layout";
 // Logo placement was measured from public/sample-meishi.png: the "a nicas"
 // mark hugs the bottom-right corner. Behind it we draw a white backing circle
 // whose diameter equals the QR finder pattern ("eye") outer size — 7 modules —
-// so the circle visually matches the three eyes. LOGO_RATIO is then sized so
-// the mark fits inside that circle. The circle stays in the bottom-right
-// corner, clear of all three finder patterns (top-left, top-right, bottom-left).
+// so the circle visually matches the three eyes. The circle stays in the
+// bottom-right corner, clear of all three finder patterns, and covers only
+// bottom-right data, which error-correction level H reconstructs.
+//
+// The circle has a second job: /meishi-template.png ALREADY carries an anicas
+// mark, drawn into the design at exactly this spot. The circle sits over it,
+// so the card shows the one mark this module draws rather than two. Move or
+// shrink the circle and the design's own mark reappears from under it — which
+// is what happened when the circle was briefly resized in PR #9.
 
 const QR_SIZE = 1000; // output canvas size in px (square)
 const QR_MARGIN = 12; // quiet-zone margin in px
 const FINDER_MODULES = 7; // a finder pattern is 7×7 modules (QR spec)
 const FINDER_CENTRE_MODULE = 3.5; // a finder centre sits 3.5 modules in from its matrix edge
-const LOGO_RATIO = 0.12; // logo box width as a fraction of QR width (fits inside the finder-size circle)
 
 /** The finished QR, in both the forms the card needs. */
 export type MeishiQr = {
@@ -104,8 +109,8 @@ export async function generateMeishiQr(handle: string): Promise<MeishiQr | null>
  * The circle is placed on that same finder grid at the bottom-right corner —
  * i.e. exactly where a 4th finder would sit — so it lines up with the
  * bottom-left finder vertically and the top-right finder horizontally, and
- * visually matches the three eyes. It covers only bottom-right data, which is
- * recoverable at error-correction level H.
+ * visually matches the three eyes. That is also where the design's own baked
+ * mark is, which the circle has to cover; do not move or resize it.
  */
 function overlayGeometry(qr: {
   _qr?: { getModuleCount(): number };
@@ -116,11 +121,12 @@ function overlayGeometry(qr: {
   // Bottom-right finder-grid position: same offset as the top-right finder's
   // x and the bottom-left finder's y.
   const centre = origin + (moduleCount - FINDER_CENTRE_MODULE) * dotSize;
-  const size = QR_SIZE * LOGO_RATIO;
+  const radius = (FINDER_MODULES * dotSize) / 2;
+  const size = radius * 2 * LOGO_IN_DISC;
   return {
     cx: centre,
     cy: centre,
-    radius: (FINDER_MODULES * dotSize) / 2,
+    radius,
     logo: { x: centre - size / 2, y: centre - size / 2, size },
   };
 }

@@ -18,6 +18,7 @@ export function Step5Confirm({ data, submitting, error, onSubmit, onBack }: Prop
 
       <MeishiPreview
         composedPhoto={data.composedPhoto}
+        nameSpread={data.nameSpread}
         qrSrc={data.qr?.png ?? null}
         pets={data.pets}
         petCount={data.petCount}

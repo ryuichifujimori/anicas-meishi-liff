@@ -24,6 +24,10 @@ export type FormData = {
   photos: (PetPhoto | null)[];
   transforms: PhotoTransform[];
   composedPhoto: string | null; // data URL of composed image
+  // How much the bar in step 4 adds to the gap between two pets, as a fraction
+  // of the card width. 0 is the card as designed; how far either way the bar
+  // reaches depends on the words typed. Only adjustable with 2+ pets.
+  nameSpread: number;
   qr: MeishiQr | null; // the styled QR, as both a preview PNG and print outlines
   ig_handle: string;
   ig_name: string;
@@ -39,9 +43,13 @@ export type SubmitPayload = {
   // original artwork rather than from the flattened print file.
   photo_base64: string;
   // Print-ready PDF (data URL): 61 x 97 mm page = 55 x 91 mm card + 3 mm
-  // bleed. Text, QR, logo and template are vector/text inside it and the photo
-  // is embedded at 350 dpi. The QR is part of it, which is why the form no
-  // longer sends a separate qr_base64.
+  // bleed. The talent's own words are live text in an embedded font and the QR
+  // is drawn as paths; the design's artwork and the photo are images. The QR is
+  // part of it, which is why the form no longer sends a separate qr_base64.
   print_base64: string;
+  // The talent's setting for the gap between the pets, as a fraction of the
+  // card width, so a card remade from this payload comes back spaced the way
+  // they left it.
+  name_spread: number;
   line_user_id: string | null;
 };
