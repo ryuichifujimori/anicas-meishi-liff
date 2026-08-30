@@ -1,6 +1,6 @@
 "use client";
 
-import { ASSETS, LOGO_DISC_MM, LOGO_IN_DISC, QR_MM } from "./meishi-layout";
+import { ASSETS, LOGO_IN_DISC } from "./meishi-layout";
 
 // QR generation matching the real c-cloud (qr.c-cloud.co.jp) business-card QR,
 // which is built on qr-code-styling. We generate the QR in the browser (this
@@ -23,17 +23,22 @@ import { ASSETS, LOGO_DISC_MM, LOGO_IN_DISC, QR_MM } from "./meishi-layout";
 // it.
 //
 // Logo placement was measured from public/sample-meishi.png: the "a nicas"
-// mark hugs the bottom-right corner, on a white backing disc that is inscribed
-// in that corner — tangent to the matrix's right and bottom edges. The disc's
-// size is a card measurement, not a QR one (LOGO_DISC_MM in
-// lib/meishi-layout.ts), so it prints at a stated diameter whatever QR version
-// the handle happens to need; QR_MM converts it into this module's pixels. It
-// stays clear of all three finder patterns, the timing patterns and the format
-// information, and covers only bottom-right data, which error-correction level
-// H reconstructs.
+// mark hugs the bottom-right corner. Behind it we draw a white backing circle
+// whose diameter equals the QR finder pattern ("eye") outer size — 7 modules —
+// so the circle visually matches the three eyes. The circle stays in the
+// bottom-right corner, clear of all three finder patterns, and covers only
+// bottom-right data, which error-correction level H reconstructs.
+//
+// The circle has a second job: /meishi-template.png ALREADY carries an anicas
+// mark, drawn into the design at exactly this spot. The circle sits over it,
+// so the card shows the one mark this module draws rather than two. Move or
+// shrink the circle and the design's own mark reappears from under it — which
+// is what happened when the circle was briefly resized in PR #9.
 
 const QR_SIZE = 1000; // output canvas size in px (square)
 const QR_MARGIN = 12; // quiet-zone margin in px
+const FINDER_MODULES = 7; // a finder pattern is 7×7 modules (QR spec)
+const FINDER_CENTRE_MODULE = 3.5; // a finder centre sits 3.5 modules in from its matrix edge
 
 /** The finished QR, in both the forms the card needs. */
 export type MeishiQr = {
@@ -96,15 +101,16 @@ export async function generateMeishiQr(handle: string): Promise<MeishiQr | null>
  * Where the white backing circle and the logo go.
  *
  * qr-code-styling draws each module at dotSize = floor((width − 2·margin) /
- * moduleCount) px and centres the matrix (origin = floor((width −
- * count·dotSize) / 2)), so the matrix's far edge — the one the disc is tangent
- * to — is origin + count·dotSize. moduleCount is read from the generated QR,
- * so the disc tracks the QR version automatically and stays welded to the
- * corner of the code rather than to the canvas's quiet zone.
+ * moduleCount) px, centres the matrix (origin = floor((width − count·dotSize)
+ * / 2)), and a finder is FINDER_MODULES (7) modules wide with its centre
+ * FINDER_CENTRE_MODULE (3.5) modules in from the edge. moduleCount is read
+ * from the generated QR, so everything tracks the QR version automatically.
  *
- * The diameter comes from the card, via LOGO_DISC_MM / QR_MM, so the mark
- * prints the size the design asks for regardless of how many modules the
- * handle needs.
+ * The circle is placed on that same finder grid at the bottom-right corner —
+ * i.e. exactly where a 4th finder would sit — so it lines up with the
+ * bottom-left finder vertically and the top-right finder horizontally, and
+ * visually matches the three eyes. That is also where the design's own baked
+ * mark is, which the circle has to cover; do not move or resize it.
  */
 function overlayGeometry(qr: {
   _qr?: { getModuleCount(): number };
@@ -112,9 +118,10 @@ function overlayGeometry(qr: {
   const moduleCount = qr._qr?.getModuleCount() ?? 37; // fallback ≈ version 5
   const dotSize = Math.floor((QR_SIZE - 2 * QR_MARGIN) / moduleCount);
   const origin = Math.floor((QR_SIZE - moduleCount * dotSize) / 2);
-  const radius = (QR_SIZE * LOGO_DISC_MM) / QR_MM / 2;
-  // Inscribed in the matrix's bottom-right corner.
-  const centre = origin + moduleCount * dotSize - radius;
+  // Bottom-right finder-grid position: same offset as the top-right finder's
+  // x and the bottom-left finder's y.
+  const centre = origin + (moduleCount - FINDER_CENTRE_MODULE) * dotSize;
+  const radius = (FINDER_MODULES * dotSize) / 2;
   const size = radius * 2 * LOGO_IN_DISC;
   return {
     cx: centre,

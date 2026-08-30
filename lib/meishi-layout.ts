@@ -117,37 +117,28 @@ export const PHOTO_SLOT_ASPECT =
   (LAYOUT.photo.width * TEMPLATE_PX.width) /
   (LAYOUT.photo.height * TEMPLATE_PX.height);
 
-/** The QR's side on the finished card, in mm — it is square. */
-export const QR_MM = LAYOUT.qr.width * CARD_TRIM_MM.width;
-
 /**
- * Diameter of the anicas mark on the card, white backing disc included.
+ * How much of the white backing disc the anicas mark fills.
  *
- * The mark sits inside the disc, and the disc is inscribed in the QR's
- * bottom-right corner — tangent to the matrix's right and bottom edges, the
- * same corner it has always hugged. Stated here in millimetres because that is
- * how it is specified and measured; `lib/qr.ts` turns it into its own
- * coordinates through QR_MM.
+ * The disc's own diameter is the QR's business (`lib/qr.ts`: seven modules,
+ * the size of a finder pattern) and is not adjustable from here — it has to
+ * stay where it is to cover the mark that /meishi-template.png already carries
+ * at that spot. What IS adjustable is how much of it the mark takes up.
  *
- * THIS IS AS BIG AS THE MARK CAN GET. The disc hides every module it covers,
- * and error-correction level H has to reconstruct them, so the size is capped
- * by what still scans. Measured on cards the form actually produced, decoded
- * with zxing-cpp (docs/print-quality-verification.md):
+ * This is the largest the mark can be. `public/anicas_logo_br_square.png` is a
+ * 500 × 500 file whose ink is a tall rounded block, not a circle: its furthest
+ * inked pixel sits 1.18127 × (box / 2) from the box's centre, so a mark drawn
+ * at the disc's full width would spill out of it at the corners. Dividing by
+ * that reach is what makes the ink touch the rim and go no further.
  *
- *   7.4 mm  read at no resolution at all
- *   7.0 mm  read at 200/350/600/1200 dpi, failed at 150 and 300
- *   6.8 mm  read at every resolution for a 12-character handle, but lost
- *           150 dpi at 14 — worse than the card is now
- *   6.4 mm  identical to the card as it stands, at 150/200/300/350/600/1200
- *           dpi, for every handle length Instagram allows (30 characters,
- *           which is a 41-module QR)
- *
- * Raising it means proving the same table again.
+ * On a 37-module QR that is a 2.246 mm mark inside a 2.653 mm disc — 0.50 mm
+ * bigger across than the 1.749 mm the card carried before. It is short of the
+ * 1 mm asked for: 1 mm more would need a 3.25 mm disc, and the disc cannot
+ * grow. See docs/print-quality-verification.md.
  */
-export const LOGO_DISC_MM = 6.4;
+const LOGO_INK_REACH = 1.18127; // measured from the logo file, in box halves
 
-/** The mark's share of that diameter — the proportion the card has always had. */
-export const LOGO_IN_DISC = 0.65934;
+export const LOGO_IN_DISC = 1 / LOGO_INK_REACH;
 
 /* ------------------------------------------------------------------ *
  * Type
@@ -250,43 +241,125 @@ export function cardText(input: CardTextInput) {
 
 /* ------------------------------------------------------------------ *
  * How far apart the pets sit
- * ------------------------------------------------------------------ */
-
-/**
- * Travel of the spacing bar in step 4, as a fraction of the card width.
+ * ------------------------------------------------------------------ *
  *
- * It is one breed-line em, which is also exactly the gap the breed line has by
- * default — so the bar's left stop closes that gap and its right stop doubles
- * it, and the whole range is ±1.8 mm on a 55 mm card.
- */
-export const PET_SPREAD_RANGE = TYPE.breed.size;
-
-/**
- * The bar itself, as step 4 hands it to `<input type="range">`: its default is
- * its centre, so a talent who never touches it gets the card as designed.
- */
-export const PET_SPREAD_BAR = {
-  min: -1,
-  max: 1,
-  step: 0.05,
-  default: 0,
-} as const;
-
-export const clampSpread = (spread: number) =>
-  Math.min(PET_SPREAD_BAR.max, Math.max(PET_SPREAD_BAR.min, spread || 0));
-
-/**
- * Gap between two pets on one line, as a fraction of the card width.
+ * The bar in step 4 sets ONE number: how much to add to the gap between two
+ * pets, as a fraction of the card width. It is added to the name line and the
+ * breed line alike, which is what keeps a pet's name and its breed moving
+ * together — widening by d slides each outer pet d/2 (two pets) or d (three)
+ * away from the card's centre line, on both lines equally.
  *
- * One em by default — the width of the full-width space the line used to be
- * joined with, so the bar at rest reproduces the card exactly as it was. The
- * bar then adds the SAME amount to every line, which is what keeps a pet's
- * name and its breed moving together: widening the gap by d slides each
- * outer pet d/2 (two pets) or d (three) away from the card's centre line, on
- * the name line and the breed line alike.
+ * How far it may travel is NOT a fixed number: it depends on what the talent
+ * typed. Both ends are worked out from the measured width of the actual words
+ * (`spreadLimits`), so a card with short names can open up much further than
+ * one with long ones. The renderers supply the measurements — the preview from
+ * a canvas in the browser's own font, the print file from the font it embeds —
+ * so neither has to guess at the other's metrics.
  */
-export const petGap = (spec: TypeSpec, spread: number) =>
-  spec.size + clampSpread(spread) * PET_SPREAD_RANGE;
+
+/** One line the bar moves: its type, and the width of each pet's text on it
+ *  in ems of that line's own size. */
+export type SpreadLine = {
+  spec: TypeSpec;
+  /** One entry per pet, in ems. */
+  widths: number[];
+  /** Whether the line may shrink to stay on one line (`fittedSize`). A line
+   *  that can shrink does not cap how far the bar opens. */
+  shrinks?: boolean;
+};
+
+const movable = (lines: SpreadLine[]) => lines.filter((l) => l.widths.length >= 2);
+
+const lineWidth = (line: SpreadLine) =>
+  line.widths.reduce((total, w) => total + w, 0) * line.spec.size;
+
+/**
+ * The bar's travel, as a fraction of the card width.
+ *
+ * `min` is where the first pair of words on any line meets: one line's gap
+ * closes to nothing, and pushing past it would run two words into each other.
+ * With a breed line present that is the breed line, whose gap (one breed em)
+ * is the smaller of the two — so the names stop a little short of touching.
+ * Letting them touch would need the breed line to move a different amount from
+ * the name line, and it moves the same amount by design.
+ *
+ * `max` is where the outermost word of a line that cannot shrink — the names —
+ * reaches the edge of the text block, i.e. the card's own margin. The breed
+ * line does not cap it: it shrinks to fit instead.
+ */
+export function spreadLimits(lines: SpreadLine[]): { min: number; max: number } {
+  const moving = movable(lines);
+  if (!moving.length) return { min: 0, max: 0 };
+
+  const min = -Math.min(...moving.map((l) => l.spec.size));
+  const rigid = moving.filter((l) => !l.shrinks);
+  const max = Math.min(
+    ...(rigid.length ? rigid : moving).map(
+      (l) =>
+        (LAYOUT.textBlock.width - lineWidth(l)) / (l.widths.length - 1) - l.spec.size,
+    ),
+  );
+  return { min, max: Math.max(min, max) };
+}
+
+export type SpreadLimits = { min: number; max: number };
+
+/** Keeps a stored bar value inside what the words currently typed allow. */
+export const clampSpread = (spread: number, limits: SpreadLimits) =>
+  Math.min(limits.max, Math.max(limits.min, spread || 0));
+
+/**
+ * The bar's own position, −1 … +1, and the gap it stands for.
+ *
+ * The travel is not symmetric — a card can usually be opened up much further
+ * than it can be closed — but the bar still has to rest in the middle when it
+ * is untouched, so each half of it is mapped onto its own end of the travel.
+ */
+export const spreadFromBar = (bar: number, limits: SpreadLimits) =>
+  bar < 0 ? -bar * limits.min : bar * limits.max;
+
+export const barFromSpread = (spread: number, limits: SpreadLimits) => {
+  if (spread < 0) return limits.min ? -spread / limits.min : 0;
+  return limits.max ? spread / limits.max : 0;
+};
+
+/**
+ * Gap between two pets on one line, as a fraction of the card width: one em —
+ * the full-width space the line used to be joined with, so the bar at rest
+ * reproduces the card exactly as it was — plus whatever the bar adds.
+ */
+export const petGap = (spec: TypeSpec, spread: number) => spec.size + spread;
+
+/**
+ * Floor for a line that shrinks to fit: 4 pt, about the smallest Japanese type
+ * worth putting on a printed card.
+ */
+export const MIN_TYPE_SIZE = (4 * MM_PER_INCH) / 72 / CARD_TRIM_MM.width;
+
+/**
+ * The size a line has to come down to for its words to hold on ONE line, as a
+ * fraction of the card width.
+ *
+ * A long breed — オーストラリアンラブラドゥードゥル and the like — used to wrap
+ * onto a second line, which pushed the name line down and broke the spacing
+ * between the two. The line is set smaller instead, and never wraps.
+ *
+ * The gaps are left exactly as the bar set them and only the glyphs shrink, so
+ * the breed line keeps tracking the name line. Returns the floor when even
+ * that is not enough, in which case the line runs into the card's margins
+ * rather than wrapping.
+ */
+export function fittedSize(
+  spec: TypeSpec,
+  widths: number[],
+  gap: number,
+  blockWidth: number = LAYOUT.textBlock.width,
+): number {
+  const glyphs = widths.reduce((total, w) => total + w, 0) * spec.size;
+  const room = blockWidth - (widths.length - 1) * gap;
+  if (glyphs <= room) return spec.size;
+  return Math.max(MIN_TYPE_SIZE, (room / glyphs) * spec.size);
+}
 
 /* ------------------------------------------------------------------ *
  * Unit helpers (so neither renderer restates a number)

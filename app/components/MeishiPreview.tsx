@@ -1,13 +1,6 @@
 "use client";
 
-import {
-  Fragment,
-  useEffect,
-  useRef,
-  useState,
-  type CSSProperties,
-  type RefObject,
-} from "react";
+import { Fragment, type CSSProperties } from "react";
 import type { Pet } from "@/lib/types";
 import {
   ASSETS,
@@ -17,10 +10,18 @@ import {
   TYPE,
   type TypeSpec,
   cardText,
+  clampSpread,
   cqw,
+  fittedSize,
   pct,
   petGap,
 } from "@/lib/meishi-layout";
+import {
+  bearingsEm,
+  textEm,
+  useCardFont,
+  useSpreadLimits,
+} from "@/lib/card-metrics";
 
 type Props = {
   composedPhoto: string | null;
@@ -53,13 +54,16 @@ export function MeishiPreview({
   igName,
   ownerName,
 }: Props) {
-  const card = useRef<HTMLDivElement>(null);
-  const family = useCardFontFamily(card);
+  const family = useCardFont();
   const text = cardText({ pets, petCount, ownerName, igName, igHandle });
+  // What the talent typed decides how far the bar could go, so a value saved
+  // against shorter names is brought back inside range here rather than
+  // pushing the card out of its block.
+  const limits = useSpreadLimits(text.breeds, text.names, family);
+  const spread = clampSpread(nameSpread, limits);
 
   return (
     <div
-      ref={card}
       className="relative w-full max-w-[360px] mx-auto bg-white shadow-sm rounded overflow-hidden"
       style={{
         aspectRatio: TEMPLATE_ASPECT,
@@ -118,9 +122,9 @@ export function MeishiPreview({
           lineHeight: LINE_HEIGHT,
         }}
       >
-        <Run spec={TYPE.breed} parts={text.breeds} {...{ nameSpread, family }} />
-        <Run spec={TYPE.name} parts={text.names} {...{ nameSpread, family }} />
-        <Run spec={TYPE.owner} parts={[text.owner]} {...{ nameSpread, family }} />
+        <Run spec={TYPE.breed} parts={text.breeds} fit {...{ spread, family }} />
+        <Run spec={TYPE.name} parts={text.names} {...{ spread, family }} />
+        <Run spec={TYPE.owner} parts={[text.owner]} {...{ family }} />
       </div>
 
       {/* IG name (line 1) + @handle (line 2), to the right of the Instagram
@@ -162,32 +166,45 @@ export function MeishiPreview({
  * string for the lines that are not per-pet. Omitted entirely when empty;
  * `lib/print.ts` skips empty runs the same way, so the vertical flow matches.
  *
- * Pass `family` to have the run centred on its ink instead of on its advance
- * width; the left-aligned runs do not need it.
+ * With `family` the run is centred on its ink rather than on its advance
+ * width; with `fit` it is also set smaller, as far as it takes, rather than
+ * allowed onto a second line. The left-aligned runs need neither.
  */
 function Run({
   spec,
   parts,
-  nameSpread = 0,
-  family,
+  spread = 0,
+  family = "",
+  fit = false,
 }: {
   spec: TypeSpec;
   parts: string[];
-  nameSpread?: number;
+  spread?: number;
   family?: string;
+  fit?: boolean;
 }) {
   const shown = parts.filter(Boolean);
-  const shift = useInkShift(shown, spec.weight, family);
-
   if (!shown.length) return null;
 
+  const widths = family ? shown.map((p) => textEm(p, spec.weight, family)) : null;
+  const gap = petGap(spec, spread);
+  const size = fit && widths ? fittedSize(spec, widths, gap) : spec.size;
+  const shift = family ? inkShift(shown, spec.weight, family) : 0;
+
   const style: CSSProperties = {
-    fontSize: cqw(spec.size),
+    fontSize: cqw(size),
     fontWeight: spec.weight,
     color: spec.color,
   };
   if (spec.marginTop) style.marginTop = cqw(spec.marginTop);
   if (shift) style.transform = `translateX(${shift}em)`;
+  // A fitted line has been sized to hold; it must never take the second line
+  // it was sized out of, and it keeps the line box the design asks for so the
+  // line below it does not move either.
+  if (fit) {
+    style.whiteSpace = "nowrap";
+    style.lineHeight = cqw(LINE_HEIGHT * spec.size);
+  }
 
   return (
     <div style={style}>
@@ -199,7 +216,7 @@ function Run({
             // same box, in the same units, as the gap lib/print.ts leaves.
             <span
               aria-hidden
-              style={{ display: "inline-block", width: cqw(petGap(spec, nameSpread)) }}
+              style={{ display: "inline-block", width: cqw(gap) }}
             />
           )}
           {part}
@@ -208,20 +225,6 @@ function Run({
     </div>
   );
 }
-
-/** The font the card is actually being drawn in — inherited, so it has to be
- *  read back off the rendered element rather than assumed. */
-function useCardFontFamily(card: RefObject<HTMLDivElement | null>): string {
-  const [family, setFamily] = useState("");
-  useEffect(() => {
-    if (card.current) setFamily(getComputedStyle(card.current).fontFamily);
-  }, [card]);
-  return family;
-}
-
-/** Measuring size for the ink readings. Large, so rounding cannot reach the
- *  third decimal of the em-relative answer. */
-const INK_PROBE_SIZE = 400;
 
 /**
  * How far a centred line has to slide, in ems of its own size, to sit centred
@@ -236,41 +239,15 @@ const INK_PROBE_SIZE = 400;
  * means to the eye. `lib/print.ts` follows the same rule against the font it
  * embeds, so the card and this preview agree.
  *
- * A canvas is the only way to read a glyph's ink extents in the browser. The
- * answer comes back in ems, so it holds at every preview width and never needs
- * remeasuring. On a line long enough to wrap, the browser picks the break and
- * the outer characters of the run are used for every line of it.
+ * On a line long enough to wrap, the browser picks the break and the outer
+ * characters of the whole run are used for every line of it.
  */
-function useInkShift(parts: string[], weight: number, family?: string): number {
-  const [shift, setShift] = useState(0);
+function inkShift(parts: string[], weight: number, family: string): number {
   const first = Array.from(parts[0] ?? "")[0] ?? "";
   const tail = Array.from(parts[parts.length - 1] ?? "");
   const last = tail[tail.length - 1] ?? "";
-
-  useEffect(() => {
-    if (!family || !first || !last) {
-      setShift(0);
-      return;
-    }
-    let cancelled = false;
-    const measure = () => {
-      const ctx = document.createElement("canvas").getContext("2d");
-      if (!ctx || cancelled) return;
-      ctx.font = `${weight} ${INK_PROBE_SIZE}px ${family}`;
-      const head = ctx.measureText(first);
-      const tailMetrics = ctx.measureText(last);
-      const lsb = -head.actualBoundingBoxLeft;
-      const rsb = tailMetrics.width - tailMetrics.actualBoundingBoxRight;
-      if (Number.isFinite(lsb) && Number.isFinite(rsb)) {
-        setShift(-(lsb - rsb) / 2 / INK_PROBE_SIZE);
-      }
-    };
-    // Whatever the stack finally resolves to is what has to be measured.
-    document.fonts?.ready.then(measure).catch(measure) ?? measure();
-    return () => {
-      cancelled = true;
-    };
-  }, [first, last, weight, family]);
-
-  return shift;
+  if (!first || !last) return 0;
+  const { lsb } = bearingsEm(first, weight, family);
+  const { rsb } = bearingsEm(last, weight, family);
+  return -(lsb - rsb) / 2;
 }

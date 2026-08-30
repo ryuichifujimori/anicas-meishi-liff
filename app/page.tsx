@@ -8,7 +8,6 @@ import { Step3Account } from "./components/Step3Account";
 import { Step4Photos } from "./components/Step4Photos";
 import { Step5Confirm } from "./components/Step5Confirm";
 import type { FormData, Pet, PetPhoto, PhotoTransform } from "@/lib/types";
-import { PET_SPREAD_BAR } from "@/lib/meishi-layout";
 import { closeLiffWindow, getLineUserId, initLiff } from "@/lib/liff";
 import { generateMeishiQr } from "@/lib/qr";
 import { buildSubmitPayload, postMeishiOrder } from "@/lib/submit";
@@ -24,7 +23,7 @@ const initialData: FormData = {
   photos: [null, null, null],
   transforms: [initialTransform(), initialTransform(), initialTransform()],
   composedPhoto: null,
-  nameSpread: PET_SPREAD_BAR.default,
+  nameSpread: 0, // the bar at rest: the card exactly as designed
   qr: null,
   ig_handle: "",
   ig_name: "",

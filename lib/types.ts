@@ -24,8 +24,9 @@ export type FormData = {
   photos: (PetPhoto | null)[];
   transforms: PhotoTransform[];
   composedPhoto: string | null; // data URL of composed image
-  // How far apart the pets sit on the name and breed lines: 0 is the card as
-  // designed, ±1 the ends of the bar in step 4. Only reachable with 2+ pets.
+  // How much the bar in step 4 adds to the gap between two pets, as a fraction
+  // of the card width. 0 is the card as designed; how far either way the bar
+  // reaches depends on the words typed. Only adjustable with 2+ pets.
   nameSpread: number;
   qr: MeishiQr | null; // the styled QR, as both a preview PNG and print outlines
   ig_handle: string;
@@ -46,8 +47,9 @@ export type SubmitPayload = {
   // is drawn as paths; the design's artwork and the photo are images. The QR is
   // part of it, which is why the form no longer sends a separate qr_base64.
   print_base64: string;
-  // The talent's setting for the gap between the pets, so a card remade from
-  // this payload comes back spaced the way they left it.
+  // The talent's setting for the gap between the pets, as a fraction of the
+  // card width, so a card remade from this payload comes back spaced the way
+  // they left it.
   name_spread: number;
   line_user_id: string | null;
 };

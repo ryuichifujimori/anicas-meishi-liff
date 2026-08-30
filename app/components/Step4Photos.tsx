@@ -3,7 +3,13 @@
 import { useRef, useState } from "react";
 import type { Pet, PetPhoto, PhotoTransform } from "@/lib/types";
 import { loadAndNormalizeImage } from "@/lib/image";
-import { PET_SPREAD_BAR } from "@/lib/meishi-layout";
+import {
+  barFromSpread,
+  cardText,
+  clampSpread,
+  spreadFromBar,
+} from "@/lib/meishi-layout";
+import { useCardFont, useSpreadLimits } from "@/lib/card-metrics";
 import { PhotoComposer } from "./PhotoComposer";
 import { MeishiPreview } from "./MeishiPreview";
 
@@ -48,6 +54,15 @@ export function Step4Photos({
   const [loadingIdx, setLoadingIdx] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileInputs = useRef<Array<HTMLInputElement | null>>([]);
+
+  // The bar's stops are not a fixed distance: they come from the width of the
+  // words the talent actually typed, measured in the font the card is set in.
+  // Left, the first pair of words meets; right, the names reach the card's
+  // margin. Short names therefore open much further than long ones.
+  const family = useCardFont();
+  const text = cardText({ pets, petCount, ownerName, igName, igHandle });
+  const spreadLimits = useSpreadLimits(text.breeds, text.names, family);
+  const spreadRange = spreadLimits.max - spreadLimits.min;
 
   const handleFile = async (idx: number, file: File | undefined) => {
     if (!file) return;
@@ -141,12 +156,17 @@ export function Step4Photos({
               <input
                 id="name-spread"
                 type="range"
-                min={PET_SPREAD_BAR.min}
-                max={PET_SPREAD_BAR.max}
-                step={PET_SPREAD_BAR.step}
-                value={nameSpread}
-                onChange={(e) => onNameSpreadChange(parseFloat(e.target.value))}
-                className="w-full accent-[#2D6A4F]"
+                min={-1}
+                max={1}
+                step={0.01}
+                value={barFromSpread(clampSpread(nameSpread, spreadLimits), spreadLimits)}
+                disabled={spreadRange <= 0}
+                onChange={(e) =>
+                  onNameSpreadChange(
+                    spreadFromBar(parseFloat(e.target.value), spreadLimits),
+                  )
+                }
+                className="w-full accent-[#2D6A4F] disabled:opacity-50"
               />
             </div>
           )}

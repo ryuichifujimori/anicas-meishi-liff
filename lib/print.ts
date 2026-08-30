@@ -16,11 +16,15 @@ import {
   PRINT_FONTS,
   TEMPLATE_PX,
   TYPE,
+  type SpreadLine,
   type TypeSpec,
   type TypeWeight,
   cardText,
+  clampSpread,
+  fittedSize,
   mmToPt,
   petGap,
+  spreadLimits,
 } from "./meishi-layout";
 
 /**
@@ -54,7 +58,10 @@ export type MeishiPrintInput = {
   qr: MeishiQr | null;
   pets: Pet[];
   petCount: 1 | 2 | 3;
-  /** The step-4 bar: how far apart the pets sit. 0 is the card as designed. */
+  /**
+   * The step-4 bar: how much to add to the gap between two pets, as a fraction
+   * of the card width. 0 is the card as designed.
+   */
   nameSpread: number;
   igHandle: string;
   igName: string;
@@ -155,6 +162,19 @@ export async function generateMeishiPrintPdf(
   // edge — the reason the photo slot is allowed to run past the band's top.
   placeCard(ribbon);
 
+  // How far the bar was allowed to travel depends on the words themselves, so
+  // it is worked out again here against the font going into the PDF — the same
+  // rule the preview applies to the font on screen. A value saved when the
+  // names were shorter is brought back inside range rather than pushing the
+  // type out of its block.
+  const spread = clampSpread(
+    input.nameSpread,
+    spreadLimits([
+      measuredLine(fonts, TYPE.breed, text.breeds, true),
+      measuredLine(fonts, TYPE.name, text.names),
+    ]),
+  );
+
   drawRuns(page, {
     block: box(card, LAYOUT.textBlock),
     align: "center",
@@ -162,9 +182,9 @@ export async function generateMeishiPrintPdf(
     pageHeight: pageH,
     fonts,
     lib,
-    spread: input.nameSpread,
+    spread,
     runs: [
-      { spec: TYPE.breed, parts: text.breeds },
+      { spec: TYPE.breed, parts: text.breeds, fit: true },
       { spec: TYPE.name, parts: text.names },
       { spec: TYPE.owner, parts: [text.owner] },
     ],
@@ -177,7 +197,7 @@ export async function generateMeishiPrintPdf(
     pageHeight: pageH,
     fonts,
     lib,
-    spread: input.nameSpread,
+    spread,
     runs: [
       { spec: TYPE.igName, parts: [text.igName] },
       { spec: TYPE.igHandle, parts: [text.igHandle] },
@@ -549,9 +569,26 @@ async function loadFonts(pdf: PDFDocument, text: string): Promise<Fonts> {
 
 /**
  * One run of the card's type: the pets' own words, one string each, or a
- * single string for the lines that are not per-pet.
+ * single string for the lines that are not per-pet. A run marked `fit` is set
+ * smaller, as far as it takes, rather than allowed onto a second line.
  */
-type Run = { spec: TypeSpec; parts: string[] };
+type Run = { spec: TypeSpec; parts: string[]; fit?: boolean };
+
+/** One line of the card measured in the font being embedded, in ems — what
+ *  `spreadLimits` and `fittedSize` work from. */
+function measuredLine(
+  fonts: Fonts,
+  spec: TypeSpec,
+  parts: string[],
+  shrinks = false,
+): SpreadLine {
+  const font = fonts[spec.weight];
+  return {
+    spec,
+    widths: parts.filter(Boolean).map((part) => measure(font, part, 1)),
+    shrinks,
+  };
+}
 
 /**
  * A measured piece of a line. Either a chunk of text, or — with an empty
@@ -589,12 +626,24 @@ function drawRuns(
     if (!parts.length) continue;
 
     const font = opts.fonts[run.spec.weight];
-    const size = run.spec.size * opts.cardWidth;
     const colour = ink(opts.lib, run.spec.color);
+    const gap = petGap(run.spec, opts.spread);
+    // A fitted run comes down to whatever size holds it on one line; the gaps
+    // stay exactly as the bar set them, so it still tracks the name line.
+    const size =
+      (run.fit
+        ? fittedSize(
+            run.spec,
+            parts.map((part) => measure(font, part, 1)),
+            gap,
+            opts.block.width / opts.cardWidth,
+          )
+        : run.spec.size) * opts.cardWidth;
     const width = (text: string) => measure(font, text, size);
-    const gap = petGap(run.spec, opts.spread) * opts.cardWidth;
 
-    const lineBox = LINE_HEIGHT * size;
+    // The line box keeps the height the design asks for even when the glyphs
+    // have been set smaller, so a fitted line never shifts the line below it.
+    const lineBox = LINE_HEIGHT * run.spec.size * opts.cardWidth;
     // CSS centres the font's content area (ascent + descent) in the line box
     // and hangs the glyphs off its top.
     const halfLeading = (lineBox - font.primary.pdf.heightAtSize(size)) / 2;
@@ -603,7 +652,12 @@ function drawRuns(
 
     top += run.spec.marginTop * opts.cardWidth;
 
-    for (const line of wrapLine(tokenise(parts, gap, width), opts.block.width)) {
+    // A fitted run has been sized to hold; it must never take the second line
+    // it was sized out of.
+    const tokens = tokenise(parts, gap * opts.cardWidth, width);
+    const lines = run.fit ? [tokens] : wrapLine(tokens, opts.block.width);
+
+    for (const line of lines) {
       let x = opts.block.x;
       if (opts.align === "center") x += offsetToCentre(font, line, size, opts.block.width);
 
