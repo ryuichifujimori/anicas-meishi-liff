@@ -3,6 +3,13 @@
 import { useRef, useState } from "react";
 import type { Pet, PetPhoto, PhotoTransform } from "@/lib/types";
 import { loadAndNormalizeImage } from "@/lib/image";
+import {
+  barFromSpread,
+  cardText,
+  clampSpread,
+  spreadFromBar,
+} from "@/lib/meishi-layout";
+import { useCardFont, useSpreadLimits } from "@/lib/card-metrics";
 import { PhotoComposer } from "./PhotoComposer";
 import { MeishiPreview } from "./MeishiPreview";
 
@@ -12,6 +19,8 @@ type Props = {
   photos: (PetPhoto | null)[];
   transforms: PhotoTransform[];
   composedPhoto: string | null;
+  /** The name-spacing bar's value. 0 is the card as designed. */
+  nameSpread: number;
   qrSrc: string | null;
   igHandle: string;
   igName: string;
@@ -19,6 +28,7 @@ type Props = {
   onPhotosChange: (photos: (PetPhoto | null)[]) => void;
   onTransformsChange: (t: PhotoTransform[]) => void;
   onComposed: (dataUrl: string) => void;
+  onNameSpreadChange: (spread: number) => void;
   onNext: () => void;
   onBack: () => void;
 };
@@ -29,6 +39,7 @@ export function Step4Photos({
   photos,
   transforms,
   composedPhoto,
+  nameSpread,
   qrSrc,
   igHandle,
   igName,
@@ -36,12 +47,25 @@ export function Step4Photos({
   onPhotosChange,
   onTransformsChange,
   onComposed,
+  onNameSpreadChange,
   onNext,
   onBack,
 }: Props) {
   const [loadingIdx, setLoadingIdx] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileInputs = useRef<Array<HTMLInputElement | null>>([]);
+
+  // The bar's stops are not a fixed distance: they come from the width of the
+  // names the talent actually typed, measured in the font the card is set in.
+  // Left, the columns close up; right, the names reach the card's margin.
+  // Short names therefore open much further than long ones.
+  const family = useCardFont();
+  const text = cardText({ pets, petCount, ownerName, igName, igHandle });
+  const spreadLimits = useSpreadLimits(
+    text.pets.map((pet) => pet.name),
+    family,
+  );
+  const spreadRange = spreadLimits.max - spreadLimits.min;
 
   const handleFile = async (idx: number, file: File | undefined) => {
     if (!file) return;
@@ -122,6 +146,33 @@ export function Step4Photos({
             }}
             onComposed={onComposed}
           />
+
+          {/* How far apart the pets sit. Nothing to space out with a single
+              pet, so the bar only exists from two upwards. It rides in the
+              same block as the zoom bar above rather than opening a section
+              of its own — both are the same kind of nudge to the artwork. */}
+          {petCount > 1 && (
+            <div className="space-y-2">
+              <label className="block text-sm font-medium" htmlFor="name-spread">
+                名前の間隔
+              </label>
+              <input
+                id="name-spread"
+                type="range"
+                min={-1}
+                max={1}
+                step={0.01}
+                value={barFromSpread(clampSpread(nameSpread, spreadLimits), spreadLimits)}
+                disabled={spreadRange <= 0}
+                onChange={(e) =>
+                  onNameSpreadChange(
+                    spreadFromBar(parseFloat(e.target.value), spreadLimits),
+                  )
+                }
+                className="w-full accent-[#2D6A4F] disabled:opacity-50"
+              />
+            </div>
+          )}
         </div>
       )}
 
@@ -130,6 +181,7 @@ export function Step4Photos({
           <h3 className="font-semibold text-sm">名刺プレビュー</h3>
           <MeishiPreview
             composedPhoto={composedPhoto}
+            nameSpread={nameSpread}
             qrSrc={qrSrc}
             pets={pets}
             petCount={petCount}

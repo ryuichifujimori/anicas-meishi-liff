@@ -3,13 +3,15 @@
  *
  * Consumed by BOTH renderers:
  *   - app/components/MeishiPreview.tsx … on-screen DOM/CSS preview
- *   - lib/print.ts                     … 350 dpi print-ready canvas → PDF
+ *   - lib/print.ts                     … the print-ready PDF
  *
  * Every geometric value lives here exactly once, expressed as a FRACTION of
  * the card box (never px, never %, never cqw), so the same number can be
- * turned into a CSS percentage for the preview and into device pixels for the
- * print raster. Do not restate any of these numbers in either renderer.
+ * turned into a CSS percentage for the preview and into PDF points for the
+ * print file. Do not restate any of these numbers in either renderer.
  */
+
+import type { Pet } from "./types";
 
 /* ------------------------------------------------------------------ *
  * Physical geometry (print)
@@ -27,19 +29,11 @@ export const PAGE_MM = {
   height: CARD_TRIM_MM.height + BLEED_MM * 2,
 } as const;
 
+/** Resolution the photo — the one raster element left on the card — is
+ *  resampled to before it is embedded. */
 export const PRINT_DPI = 350;
 
 const MM_PER_INCH = 25.4;
-
-/**
- * Raster size of the image embedded in the PDF: 840 × 1336 px.
- * floor() rather than round() so the numbers land exactly on the 1336 × 840
- * figure the print spec calls for (effective 349.8 dpi ≈ 350 dpi).
- */
-export const PRINT_PX = {
-  width: Math.floor((PAGE_MM.width * PRINT_DPI) / MM_PER_INCH),
-  height: Math.floor((PAGE_MM.height * PRINT_DPI) / MM_PER_INCH),
-} as const;
 
 /** Points (1/72 inch) — the unit PDF pages are measured in. */
 export const mmToPt = (mm: number) => (mm * 72) / MM_PER_INCH;
@@ -48,15 +42,34 @@ export const mmToPt = (mm: number) => (mm * 72) / MM_PER_INCH;
  * Artwork
  * ------------------------------------------------------------------ */
 
-/** Intrinsic size of /meishi-template.png and /meishi-ribbon.png. */
+/**
+ * Intrinsic size of /meishi-template.png and /meishi-ribbon.png.
+ *
+ * These are also what goes into the print PDF. Across the 55 mm card that is
+ * 1046 / (55 / 25.4) ≈ 483 dpi — comfortably above the 350 dpi the printer
+ * asks for, so the design needs no vector stand-in to print cleanly.
+ */
 export const TEMPLATE_PX = { width: 1046, height: 1738 } as const;
 
 /** CSS `aspect-ratio` value for the preview card box. */
 export const TEMPLATE_ASPECT = `${TEMPLATE_PX.width} / ${TEMPLATE_PX.height}`;
 
 export const ASSETS = {
+  /**
+   * The design itself. Both renderers place these exact files: the preview as
+   * `<img>`, the print PDF as an embedded PNG at its native pixel size.
+   *
+   * They are deliberately NOT traced into outlines on the way to the PDF. An
+   * auto-trace of a bitmap follows the pixel grid, so the paw prints, the
+   * Instagram glyph and the ribbon's baked caption came out of it with a
+   * staircase along every curve — worse than the artwork it replaced. The
+   * original pixels, placed at ≈483 dpi (see TEMPLATE_PX), carry the design's
+   * own antialiasing instead.
+   */
   template: "/meishi-template.png",
   ribbon: "/meishi-ribbon.png",
+  /** The anicas mark placed in the QR's bottom-right corner (500 × 500). */
+  logo: "/anicas_logo_br_square.png",
 } as const;
 
 /** Paper white — also what the bleed area is flooded with. */
@@ -86,7 +99,7 @@ export const PAPER_COLOR = "#FFFFFF";
  *
  * `top`/`height` are fractions of the card HEIGHT; `left`/`right`/`width` are
  * fractions of the card WIDTH — exactly how CSS resolves them for an
- * absolutely positioned child, so the preview and the print raster agree.
+ * absolutely positioned child, so the preview and the print file agree.
  */
 export const LAYOUT = {
   photo: { top: 0.029, left: 0.05, width: 0.9, height: 0.471 },
@@ -103,6 +116,29 @@ export const LAYOUT = {
 export const PHOTO_SLOT_ASPECT =
   (LAYOUT.photo.width * TEMPLATE_PX.width) /
   (LAYOUT.photo.height * TEMPLATE_PX.height);
+
+/**
+ * How much of the white backing disc the anicas mark fills.
+ *
+ * The disc's own diameter is the QR's business (`lib/qr.ts`: seven modules,
+ * the size of a finder pattern) and is not adjustable from here — it has to
+ * stay where it is to cover the mark that /meishi-template.png already carries
+ * at that spot. What IS adjustable is how much of it the mark takes up.
+ *
+ * This is the largest the mark can be. `public/anicas_logo_br_square.png` is a
+ * 500 × 500 file whose ink is a tall rounded block, not a circle: its furthest
+ * inked pixel sits 1.18127 × (box / 2) from the box's centre, so a mark drawn
+ * at the disc's full width would spill out of it at the corners. Dividing by
+ * that reach is what makes the ink touch the rim and go no further.
+ *
+ * On a 37-module QR that is a 2.246 mm mark inside a 2.653 mm disc — 0.50 mm
+ * bigger across than the 1.749 mm the card carried before. It is short of the
+ * 1 mm asked for: 1 mm more would need a 3.25 mm disc, and the disc cannot
+ * grow. See docs/print-quality-verification.md.
+ */
+const LOGO_INK_REACH = 1.18127; // measured from the logo file, in box halves
+
+export const LOGO_IN_DISC = 1 / LOGO_INK_REACH;
 
 /* ------------------------------------------------------------------ *
  * Type
@@ -134,21 +170,269 @@ export const TYPE = {
 
 export type TypeSpec = (typeof TYPE)[keyof typeof TYPE];
 
-/**
- * Font stack used by the card text. globals.css sets it on <body> and the
- * preview inherits it; the print renderer reads it back off the live document
- * (see `resolveCardFontFamily`) so the two can never drift apart. This literal
- * is only the fallback for a document that has not applied the stylesheet.
- */
-export const FALLBACK_FONT_FAMILY =
-  '-apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic UI", "Meiryo", sans-serif';
+export type TypeWeight = (typeof TYPE)[keyof typeof TYPE]["weight"];
 
-/** The font stack the card actually renders with, read off the live document. */
-export function resolveCardFontFamily(): string {
-  if (typeof window === "undefined" || !document.body) return FALLBACK_FONT_FAMILY;
-  const family = getComputedStyle(document.body).fontFamily;
-  return family || FALLBACK_FONT_FAMILY;
+/**
+ * Fonts embedded in the print PDF, one file per weight `TYPE` asks for.
+ *
+ * The card text goes into the PDF as text, not as pixels, so it needs a real
+ * font to travel with it — the browser's own UI font cannot be embedded. These
+ * are Noto Sans JP subset to the cp932 (JIS + NEC/IBM) repertoire, which covers
+ * the kana and kanji a pet, breed or owner name can be written with; see
+ * `scripts/build-print-fonts.sh`. pdf-lib subsets them again on the way in, so
+ * a finished PDF only carries the handful of glyphs that card actually uses.
+ *
+ * Plain TTF rather than WOFF: fontkit has to undo a WOFF's per-table deflate
+ * in JavaScript before it can subset, which costs seconds on a phone, and the
+ * server compresses the file on the wire either way.
+ */
+export const PRINT_FONTS: Record<TypeWeight, string> = {
+  400: "/fonts/NotoSansJP-400.ttf",
+  500: "/fonts/NotoSansJP-500.ttf",
+  700: "/fonts/NotoSansJP-700.ttf",
+};
+
+/**
+ * Picked up only when a character is missing from the fonts above — an emoji
+ * in an Instagram display name, typically. Fetched lazily, so a card whose
+ * text is entirely kana/kanji/latin never pays for it.
+ */
+export const PRINT_FALLBACK_FONT = "/fonts/NotoEmoji-400.ttf";
+
+/* ------------------------------------------------------------------ *
+ * Copy
+ * ------------------------------------------------------------------ */
+
+export type CardTextInput = {
+  pets: Pet[];
+  petCount: number;
+  ownerName: string;
+  igName: string;
+  igHandle: string;
+};
+
+/**
+ * Every string the card shows, composed once for both renderers — so the
+ * 【owner：…】/@ decoration cannot drift between the preview and the print PDF
+ * either. An empty run is skipped by both renderers, closing its gap in the
+ * vertical flow.
+ *
+ * The pets come back as PAIRS, one per column, so a breed can never be
+ * separated from the name it belongs to. Every string is trimmed here, so
+ * nothing but the pet's own letters reaches either renderer.
+ */
+export function cardText(input: CardTextInput) {
+  const owner = input.ownerName.trim();
+  const handle = input.igHandle.trim();
+
+  return {
+    pets: input.pets
+      .slice(0, input.petCount)
+      .map((pet) => ({ name: pet.name.trim(), breed: pet.breed.trim() }))
+      .filter((pet) => pet.name || pet.breed),
+    owner: owner && `【owner：${owner}】`,
+    igName: input.igName.trim(),
+    igHandle: handle && `@${handle}`,
+  };
 }
+
+/** Every character the card will set, for the font loader to size its subset. */
+export const cardGlyphs = (text: ReturnType<typeof cardText>) =>
+  text.pets.map((p) => p.name + p.breed).join("") +
+  text.owner + text.igName + text.igHandle;
+
+/* ------------------------------------------------------------------ *
+ * The pets' own words
+ * ------------------------------------------------------------------ *
+ *
+ * A card carries one COLUMN PER PET: the pet's breed on top, its name below,
+ * both hung on the same vertical axis, and the columns laid out across the
+ * text block. Two, three, four pets — it is the same rule with a different
+ * count; nothing here branches on how many there are.
+ *
+ * The bar in step 4 sets one number: how much to add to the gap between two
+ * pets, as a fraction of the card width. Because the breed hangs on its name's
+ * axis, moving the columns moves both lines by exactly the same amount.
+ *
+ * Neither line is ever allowed onto a second line or past the block's edges.
+ * The names come down in size until they fit; the breeds come down until they
+ * clear their neighbours and the block. Sizes are worked out from the WORDS
+ * THEMSELVES, measured by whichever renderer is asking — the preview from a
+ * canvas in the browser's font, the print file from the font it embeds.
+ */
+
+/**
+ * A string as its renderer measured it, in ems of its own size: how far it
+ * advances, and where its ink actually starts and ends relative to the point
+ * it is drawn from.
+ */
+export type Measured = { advance: number; inkLeft: number; inkRight: number };
+
+export const EMPTY_MEASURE: Measured = { advance: 0, inkLeft: 0, inkRight: 0 };
+
+const inkWidth = (m: Measured) => m.inkRight - m.inkLeft;
+const inkMid = (m: Measured) => (m.inkLeft + m.inkRight) / 2;
+
+/** Where the type block sits and how wide it is, in card fractions. */
+type Block = { left: number; width: number };
+
+export type SpreadLimits = { min: number; max: number };
+
+/** Keeps a stored bar value inside what the words currently typed allow. */
+export const clampSpread = (spread: number, limits: SpreadLimits) =>
+  Math.min(limits.max, Math.max(limits.min, spread || 0));
+
+/**
+ * The bar's own position, −1 … +1, and the gap it stands for.
+ *
+ * The travel is not symmetric — a card can usually be opened up much further
+ * than it can be closed — but the bar still has to rest in the middle when it
+ * is untouched, so each half of it is mapped onto its own end of the travel.
+ */
+export const spreadFromBar = (bar: number, limits: SpreadLimits) =>
+  bar < 0 ? -bar * limits.min : bar * limits.max;
+
+export const barFromSpread = (spread: number, limits: SpreadLimits) => {
+  if (spread < 0) return limits.min ? -spread / limits.min : 0;
+  return limits.max ? spread / limits.max : 0;
+};
+
+/** Gap between two columns: one name em — the full-width space the line used
+ *  to be joined with — plus whatever the bar adds. */
+const columnGap = (spread: number) => Math.max(0, TYPE.name.size + spread);
+
+/**
+ * How far the bar may travel for the words currently typed.
+ *
+ * `min` closes the gap to nothing: the names' boxes meet, which is as tight as
+ * the card can be set. `max` is the point where the names reach the block's
+ * edges — and never more than that, because past it the names would have to be
+ * set smaller than they already are just to make room for the space between
+ * them. On a card whose names already fill the block, `max` is 0 and the bar
+ * only tightens.
+ */
+export function spreadLimits(
+  names: Measured[],
+  block: Block = LAYOUT.textBlock,
+): SpreadLimits {
+  if (names.length < 2) return { min: 0, max: 0 };
+  const advance = names.reduce((total, m) => total + m.advance, 0);
+  if (!advance) return { min: 0, max: 0 };
+
+  const gaps = names.length - 1;
+  const design = TYPE.name.size;
+  const atRest = Math.min(design, (block.width - gaps * design) / advance);
+  const widest = (block.width - advance * atRest) / gaps;
+  return { min: -design, max: Math.max(0, widest - design) };
+}
+
+/** Where every pet's words go: one axis each, and the size the two lines end
+ *  up at once they have been made to fit. */
+export type PetLayout = {
+  /** One per pet, in card fractions from the page's left edge. */
+  axes: number[];
+  nameSize: number;
+  breedSize: number;
+};
+
+/**
+ * Lays the columns out.
+ *
+ * The names are set as one line — measured widths, the bar's gap between them,
+ * the whole thing centred in the block on its INK rather than on its advance
+ * box — and each pet's axis is then wherever its own name's ink centre landed.
+ * That is exactly what a single centred line has always done, so a card with
+ * one or two pets comes out where it always did; what is new is that the
+ * breeds are hung on those same axes instead of being centred as a line of
+ * their own.
+ *
+ * Each line is then only as big as it can be:
+ *   names   the largest size at which they still fit the block, never more
+ *           than the design size
+ *   breeds  the largest size at which no breed reaches its neighbour or the
+ *           block's edge, never more than the design size
+ *
+ * so nothing ever wraps and nothing ever runs off the card.
+ */
+export function layoutPets(
+  names: Measured[],
+  breeds: Measured[],
+  spread: number,
+  block: Block = LAYOUT.textBlock,
+): PetLayout {
+  const n = names.length;
+  if (!n) return { axes: [], nameSize: TYPE.name.size, breedSize: TYPE.breed.size };
+
+  const gap = columnGap(spread);
+  const advance = names.reduce((total, m) => total + m.advance, 0);
+  const room = Math.max(0, block.width - (n - 1) * gap);
+  const nameSize = advance
+    ? Math.min(TYPE.name.size, room / advance)
+    : TYPE.name.size;
+
+  // Where each name starts, measured from the first one.
+  const starts: number[] = [];
+  let x = 0;
+  for (const m of names) {
+    starts.push(x);
+    x += m.advance * nameSize + gap;
+  }
+  // Centre the run on the ink the outermost names actually put down.
+  const first = starts[0] + names[0].inkLeft * nameSize;
+  const last = starts[n - 1] + names[n - 1].inkRight * nameSize;
+  const origin = block.left + (block.width - (last - first)) / 2 - first;
+  const axes = names.map((m, i) => origin + starts[i] + inkMid(m) * nameSize);
+
+  return { axes, nameSize, breedSize: breedSize(breeds, axes, block) };
+}
+
+/**
+ * Clear space kept between two breeds, in ems of their own size — the same
+ * one-em separation the card has always put between two pets. Without it a
+ * pair of long breeds is merely shrunk until they touch, and the line reads as
+ * one word again, which is the very thing the columns are for.
+ */
+const BREED_SEPARATION = 1;
+
+/**
+ * The largest the breeds can be set without one reaching the next, or the
+ * outermost reaching the edge of the block. Every constraint is linear in the
+ * size, so each is a straight division and the answer is the smallest of them.
+ */
+function breedSize(breeds: Measured[], axes: number[], block: Block): number {
+  const caps: number[] = [TYPE.breed.size];
+  const half = (i: number) => inkWidth(breeds[i] ?? EMPTY_MEASURE) / 2;
+  const n = axes.length;
+
+  if (half(0) > 0) caps.push((axes[0] - block.left) / half(0));
+  if (half(n - 1) > 0) {
+    caps.push((block.left + block.width - axes[n - 1]) / half(n - 1));
+  }
+  for (let i = 0; i < n - 1; i++) {
+    const together = half(i) + half(i + 1);
+    if (together > 0) {
+      caps.push((axes[i + 1] - axes[i]) / (together + BREED_SEPARATION));
+    }
+  }
+  return Math.max(0, Math.min(...caps));
+}
+
+/** Where to start drawing a string so its ink centre lands on `axis`. */
+export const inkCentred = (m: Measured, axis: number, size: number) =>
+  axis - inkMid(m) * size;
+
+/**
+ * How far a string has to slide, in ems, to be centred on its INK rather than
+ * on its advance box — what a renderer that centres by advance (CSS, or the
+ * arithmetic in `drawRuns`) has to add.
+ *
+ * A Japanese glyph is drawn inside a full-width em and carries whatever is
+ * left over as side bearings, and those differ wildly from glyph to glyph —
+ * the ト that opens トイプードル hangs 0.30 em of empty space off its left,
+ * where the ペ that opens ペコ hangs 0.04. Centring the advance box therefore
+ * leaves two lines on visibly different axes.
+ */
+export const inkOffset = (m: Measured) => m.advance / 2 - inkMid(m);
 
 /* ------------------------------------------------------------------ *
  * Unit helpers (so neither renderer restates a number)
