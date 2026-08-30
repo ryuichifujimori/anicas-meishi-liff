@@ -21,8 +21,8 @@ type Props = {
 
 /**
  * Composes multiple photos side-by-side onto a transparent canvas.
- * Each photo lives in a horizontal slot; user can drag to pan and pinch
- * (or use slider) to zoom within its slot.
+ * Each photo lives in a horizontal slot, filled cover-fit; dragging pans the
+ * photo inside its own slot.
  */
 export function PhotoComposer({
   photos,
@@ -55,7 +55,7 @@ export function PhotoComposer({
     ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
 
     imgs.forEach((img, i) => {
-      const t = transforms[i] ?? { cx: 0.5, cy: 0.5, scale: 1 };
+      const t = transforms[i] ?? { cx: 0.5, cy: 0.5 };
       drawPhotoInSlot(ctx, img, i * slotW, 0, slotW, CANVAS_H, t);
     });
 
@@ -120,11 +120,6 @@ export function PhotoComposer({
     }
   };
 
-  const setScale = (idx: number, scale: number) => {
-    const next = transforms.map((t, i) => (i === idx ? { ...t, scale } : t));
-    onTransformsChange(next);
-  };
-
   return (
     <div className="space-y-3">
       <div
@@ -163,21 +158,6 @@ export function PhotoComposer({
           編集中: ペット {activeIdx + 1} / 写真をドラッグして位置調整
         </div>
       )}
-
-      <div className="space-y-2">
-        <label className="block text-sm font-medium">
-          ペット {activeIdx + 1} の拡大率
-        </label>
-        <input
-          type="range"
-          min={0.5}
-          max={3}
-          step={0.05}
-          value={transforms[activeIdx]?.scale ?? 1}
-          onChange={(e) => setScale(activeIdx, parseFloat(e.target.value))}
-          className="w-full accent-[#2D6A4F]"
-        />
-      </div>
     </div>
   );
 }
@@ -187,9 +167,8 @@ function clamp(v: number, min: number, max: number) {
 }
 
 /**
- * Draws an image into a slot using cover-fit, then applies user transform
- * (cx/cy as 0-1 indicating which point of the image is centered in the slot,
- * scale relative to cover-fit baseline).
+ * Draws an image into a slot using cover-fit, then applies the user's pan
+ * (cx/cy as 0-1 indicating which point of the image is centered in the slot).
  */
 function drawPhotoInSlot(
   ctx: CanvasRenderingContext2D,
@@ -200,8 +179,7 @@ function drawPhotoInSlot(
   sh: number,
   t: PhotoTransform,
 ) {
-  const baseScale = Math.max(sw / img.width, sh / img.height);
-  const scale = baseScale * t.scale;
+  const scale = Math.max(sw / img.width, sh / img.height);
   const drawW = img.width * scale;
   const drawH = img.height * scale;
   // cx/cy ∈ [0,1] is which fraction of the IMAGE is centered in the slot.

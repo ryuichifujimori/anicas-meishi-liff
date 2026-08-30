@@ -1,260 +1,370 @@
 "use client";
 
-import type { CSSProperties } from "react";
+import { useRef, useState, type CSSProperties, type PointerEvent } from "react";
 import type { Pet } from "@/lib/types";
 import {
+  ADJUSTABLE,
+  type Adjust,
+  type AdjustKey,
+  type CardRect,
+  type FaceAdjust,
+  type PlacedRun,
+  type ResolvedCard,
+  resolveCard,
+} from "@/lib/card-adjust";
+import {
   ASSETS,
-  LAYOUT,
-  LINE_HEIGHT,
+  IG_MARK,
   TEMPLATE_ASPECT,
-  TYPE,
-  type TypeSpec,
-  type Measured,
   cardText,
-  clampSpread,
   cqw,
-  inkCentred,
-  inkOffset,
-  layoutPets,
+  hToW,
   pct,
+  wToH,
 } from "@/lib/meishi-layout";
-import { measureText, useCardFont, useSpreadLimits } from "@/lib/card-metrics";
+import { useMeasureRun } from "@/lib/card-metrics";
 
 type Props = {
   composedPhoto: string | null;
   qrSrc: string | null;
+  /** The QR's module pitch, which decides how far it may be shrunk. */
+  qrPitch: number | null;
   pets: Pet[];
   petCount: 1 | 2 | 3;
-  /** The step-4 bar: how far apart the pets sit. 0 is the card as designed. */
-  nameSpread: number;
   igHandle: string;
   igName: string;
   ownerName: string;
+  /** Where the talent has put the five movable parts. */
+  adjust: FaceAdjust;
+  /**
+   * Supply this to let them move and resize those parts on the preview.
+   * Without it the preview is only a preview — step 5 shows it that way.
+   */
+  onAdjustChange?: (adjust: FaceAdjust) => void;
 };
 
 /**
- * On-screen preview of the finished card.
+ * On-screen preview of the finished card — and, in step 4, the surface the
+ * talent lays it out on.
  *
  * Every position, size, weight and colour — and every string, separators
- * included — comes from `lib/meishi-layout.ts`, which `lib/print.ts` also
- * renders from, so the print-ready PDF and this preview can never drift apart.
- * Fractions are turned into CSS percentages (`pct`) and container-query units
- * (`cqw`) here; the print renderer turns the same fractions into PDF points.
+ * included — comes from `lib/meishi-layout.ts` by way of `lib/card-adjust.ts`,
+ * which `lib/print.ts` also renders from, so the print-ready PDF and this
+ * preview can never drift apart. Fractions are turned into CSS percentages
+ * (`pct`) and container-query units (`cqw`) here; the print renderer turns the
+ * same fractions into PDF points.
  */
 export function MeishiPreview({
   composedPhoto,
   qrSrc,
+  qrPitch,
   pets,
   petCount,
-  nameSpread,
   igHandle,
   igName,
   ownerName,
+  adjust,
+  onAdjustChange,
 }: Props) {
-  const family = useCardFont();
-  const text = cardText({ pets, petCount, ownerName, igName, igHandle });
-  // What the talent typed decides how far the bar could go, so a value saved
-  // against shorter names is brought back inside range here rather than
-  // pushing the card out of its block.
-  const limits = useSpreadLimits(
-    text.pets.map((p) => p.name),
-    family,
-  );
-  const names = text.pets.map((p) => measureText(p.name, TYPE.name.weight, family));
-  const breeds = text.pets.map((p) => measureText(p.breed, TYPE.breed.weight, family));
-  const columns = layoutPets(names, breeds, clampSpread(nameSpread, limits));
-  const line = (measures: Measured[], size: number, word: (i: number) => string) =>
-    text.pets.map((_, i) => ({
-      text: word(i),
-      left: inkCentred(measures[i], columns.axes[i], size),
-    }));
+  const measure = useMeasureRun();
+  const card = resolveCard({
+    text: cardText({ pets, petCount, ownerName, igName, igHandle }),
+    measure,
+    adjust,
+    hasPhoto: Boolean(composedPhoto),
+    qrPitch,
+  });
 
   return (
-    <div
-      className="relative w-full max-w-[360px] mx-auto bg-white shadow-sm rounded overflow-hidden"
-      style={{
-        aspectRatio: TEMPLATE_ASPECT,
-        containerType: "inline-size",
-      }}
-    >
-      {/* Background template */}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={ASSETS.template}
-        alt=""
-        className="absolute inset-0 w-full h-full object-contain pointer-events-none"
-      />
-
-      {/* Photo. Canvas aspect (~1.15) is matched to this slot so object-cover
-          fills without clipping. Drawn ON TOP of the template background and
-          intentionally extended into the ribbon band; the ribbon overlay below
-          is then drawn over it. */}
-      {composedPhoto && (
-        <div
-          className="absolute overflow-hidden"
-          style={{
-            top: pct(LAYOUT.photo.top),
-            left: pct(LAYOUT.photo.left),
-            width: pct(LAYOUT.photo.width),
-            height: pct(LAYOUT.photo.height),
-          }}
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={composedPhoto}
-            alt="pet"
-            className="w-full h-full object-cover"
-          />
-        </div>
-      )}
-
-      {/* Ribbon overlay — the ribbon graphic on a transparent background,
-          positioned identically to the template so it aligns pixel-perfectly
-          with the baked ribbon. Drawn AFTER the photo so the white band sits
-          IN FRONT of the photo and hides its lower edge. */}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={ASSETS.ribbon}
-        alt=""
-        className="absolute inset-0 w-full h-full object-contain pointer-events-none"
-      />
-
-      {/* Pet text block below ribbon: breed (small) → name (large) → owner */}
+    <div className="relative w-full max-w-[360px] mx-auto">
       <div
-        className="absolute text-center"
-        style={{
-          top: pct(LAYOUT.textBlock.top),
-          left: pct(LAYOUT.textBlock.left),
-          width: pct(LAYOUT.textBlock.width),
-          lineHeight: LINE_HEIGHT,
-        }}
+        className="relative w-full bg-white shadow-sm rounded overflow-hidden"
+        style={{ aspectRatio: TEMPLATE_ASPECT, containerType: "inline-size" }}
       >
-        <PetLine
-          spec={TYPE.breed}
-          size={columns.breedSize}
-          items={line(breeds, columns.breedSize, (i) => text.pets[i].breed)}
-        />
-        <PetLine
-          spec={TYPE.name}
-          size={columns.nameSize}
-          items={line(names, columns.nameSize, (i) => text.pets[i].name)}
-        />
-        <Run spec={TYPE.owner} text={text.owner} {...{ family }} />
-      </div>
-
-      {/* IG name (line 1) + @handle (line 2), to the right of the Instagram
-          icon that is already drawn in the template */}
-      <div
-        className="absolute"
-        style={{
-          top: pct(LAYOUT.igBlock.top),
-          left: pct(LAYOUT.igBlock.left),
-          width: pct(LAYOUT.igBlock.width),
-          lineHeight: LINE_HEIGHT,
-        }}
-      >
-        <Run spec={TYPE.igName} text={text.igName} />
-        <Run spec={TYPE.igHandle} text={text.igHandle} />
-      </div>
-
-      {/* QR code, bottom-right (square) */}
-      {qrSrc && (
-        // eslint-disable-next-line @next/next/no-img-element
+        {/* Background template */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src={qrSrc}
-          alt="QR"
-          className="absolute"
-          style={{
-            top: pct(LAYOUT.qr.top),
-            right: pct(LAYOUT.qr.right),
-            width: pct(LAYOUT.qr.width),
-            aspectRatio: "1 / 1",
-          }}
+          src={ASSETS.template}
+          alt=""
+          className="absolute inset-0 w-full h-full object-contain pointer-events-none"
         />
+
+        {/* Photo. Canvas aspect (~1.15) is matched to this slot so object-cover
+            fills without clipping — and the slot only ever changes size, never
+            shape, so that holds wherever the talent puts it. Drawn ON TOP of
+            the template background and intentionally extended into the ribbon
+            band; the ribbon overlay below is then drawn over it. */}
+        {composedPhoto && (
+          <div className="absolute overflow-hidden" style={frame(card.photo)}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={composedPhoto}
+              alt="pet"
+              className="w-full h-full object-cover"
+            />
+          </div>
+        )}
+
+        {/* Ribbon overlay — the ribbon graphic on a transparent background,
+            positioned identically to the template so it aligns pixel-perfectly
+            with the baked ribbon. Drawn AFTER the photo so the white band sits
+            IN FRONT of the photo and hides its lower edge. */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={ASSETS.ribbon}
+          alt=""
+          className="absolute inset-0 w-full h-full object-contain pointer-events-none"
+        />
+
+        {/* The Instagram glyph belongs to the Instagram line, but the template
+            draws it — so once the line has been moved, the template's glyph is
+            covered over here and the same pixels are placed again below, at
+            wherever the line went. Untouched, neither of these exists and the
+            card is the card it always was. */}
+        {card.ig.mark && <div className="absolute bg-white" style={frame(MARK_BOX)} />}
+
+        {/* Pet columns (breed above name), then the owner line under them */}
+        <Run run={card.breed} />
+        <Run run={card.name} />
+        <Run run={card.owner} />
+
+        {card.ig.mark && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={ASSETS.igMark} alt="" className="absolute" style={frame(card.ig.mark)} />
+        )}
+        {card.ig.runs.map((run, i) => (
+          <Run key={i} run={run} />
+        ))}
+
+        {/* QR code, bottom-right (square) */}
+        {qrSrc && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={qrSrc} alt="QR" className="absolute" style={frame(card.qr)} />
+        )}
+      </div>
+
+      {/* The frame and its handles sit OUTSIDE the card's clipping box, so a
+          part dragged flush against an edge still has grabbable corners. */}
+      {onAdjustChange && (
+        <Editor card={card} adjust={adjust} onChange={onAdjustChange} />
       )}
     </div>
   );
 }
 
-/**
- * One line of a pet column block: the breed, or the name. Each item is already
- * placed on its own column's axis by `layoutPets`, so the line is a row of
- * absolutely positioned words rather than a flowed one — the same placement
- * `lib/print.ts` makes in the PDF.
- *
- * The row keeps the height the design asks for even when the words have been
- * set smaller to fit, so shrinking one line never shifts the ones below it.
- */
-function PetLine({
-  spec,
-  size,
-  items,
-}: {
-  spec: TypeSpec;
-  size: number;
-  items: { text: string; left: number }[];
-}) {
-  const shown = items.filter((item) => item.text);
-  if (!shown.length) return null;
+/** Where the template draws the Instagram glyph, as a card rectangle. */
+const MARK_BOX: CardRect = {
+  x: IG_MARK.left,
+  y: IG_MARK.top,
+  width: IG_MARK.width,
+  height: IG_MARK.height,
+};
 
-  const style: CSSProperties = {
-    position: "relative",
-    height: cqw(LINE_HEIGHT * spec.size),
-  };
-  if (spec.marginTop) style.marginTop = cqw(spec.marginTop);
-
+/** One run of type: each line exactly where `lib/card-adjust.ts` put it, so
+ *  nothing is left for CSS to flow, centre or break. */
+function Run({ run }: { run: PlacedRun }) {
+  if (!run.lines.length) return null;
   return (
-    <div style={style}>
-      {shown.map((item, i) => (
+    <>
+      {run.lines.map((line, i) => (
         <span
           key={i}
+          className="absolute"
           style={{
-            position: "absolute",
-            top: 0,
-            left: cqw(item.left - LAYOUT.textBlock.left),
-            fontSize: cqw(size),
-            lineHeight: cqw(LINE_HEIGHT * spec.size),
-            fontWeight: spec.weight,
-            color: spec.color,
+            left: cqw(line.x),
+            top: pct(line.top),
+            fontSize: cqw(run.size),
+            lineHeight: cqw(run.lineBox),
+            fontWeight: run.spec.weight,
+            color: run.spec.color,
             whiteSpace: "nowrap",
           }}
         >
-          {item.text}
+          {line.text}
         </span>
       ))}
+    </>
+  );
+}
+
+/** A card rectangle as the CSS that puts a box exactly there. */
+function frame(rect: CardRect): CSSProperties {
+  return {
+    left: pct(rect.x),
+    top: pct(rect.y),
+    width: pct(rect.width),
+    height: pct(rect.height),
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * Laying the card out by hand
+ * ------------------------------------------------------------------ */
+
+/** Where the handles go. Dragging any of them scales the part about its own
+ *  centre, so it grows and shrinks in place. */
+const CORNERS = [
+  { x: 0, y: 0 },
+  { x: 1, y: 0 },
+  { x: 0, y: 1 },
+  { x: 1, y: 1 },
+] as const;
+
+/** How much slop a touch gets around a part, in card widths (~3 px at the
+ *  preview's size). A single row of small type would be hard to land on
+ *  otherwise. */
+const TOUCH_SLOP = 0.008;
+
+type Point = { x: number; y: number };
+
+type Drag =
+  | { kind: "move"; key: AdjustKey; from: Adjust; start: Point }
+  | { kind: "scale"; key: AdjustKey; from: Adjust; reach: number };
+
+/**
+ * The one thing the talent has to keep in their head is which part they are
+ * holding, so that is the only state kept here. Touching a part selects it and
+ * starts moving it; touching anywhere outside it lets go.
+ */
+function Editor({
+  card,
+  adjust,
+  onChange,
+}: {
+  card: ResolvedCard;
+  adjust: FaceAdjust;
+  onChange: (adjust: FaceAdjust) => void;
+}) {
+  const [selected, setSelected] = useState<AdjustKey | null>(null);
+  const host = useRef<HTMLDivElement | null>(null);
+  const drag = useRef<Drag | null>(null);
+
+  /** Pointer position in card fractions: x across the width, y down the height. */
+  const at = (e: PointerEvent): Point | null => {
+    const box = host.current?.getBoundingClientRect();
+    if (!box?.width || !box.height) return null;
+    return {
+      x: (e.clientX - box.left) / box.width,
+      y: (e.clientY - box.top) / box.height,
+    };
+  };
+
+  // Held to what the card allows before it is stored, not after — so a finger
+  // that runs past an edge does not build up travel it has to give back before
+  // the part moves again, and the value that reaches the payload is one the
+  // card can actually be printed from.
+  const set = (key: AdjustKey, value: Adjust) =>
+    onChange({ ...adjust, [key]: card.clamp[key](value) });
+
+  const startScale = (key: AdjustKey) => (e: PointerEvent<HTMLElement>) => {
+    const point = at(e);
+    const rect = card.frames[key];
+    if (!point || !rect) return;
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    drag.current = { kind: "scale", key, from: adjust[key], reach: reach(rect, point) };
+  };
+
+  const onDown = (e: PointerEvent<HTMLDivElement>) => {
+    const point = at(e);
+    if (!point) return;
+    const key = hit(card, point, selected);
+    setSelected(key);
+    if (!key) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    drag.current = { kind: "move", key, from: adjust[key], start: point };
+  };
+
+  const onMove = (e: PointerEvent<HTMLDivElement>) => {
+    const d = drag.current;
+    const point = at(e);
+    if (!d || !point) return;
+    if (d.kind === "move") {
+      set(d.key, {
+        ...d.from,
+        dx: d.from.dx + (point.x - d.start.x),
+        dy: d.from.dy + (point.y - d.start.y),
+      });
+      return;
+    }
+    // The part scales about its own centre, which a scale drag never moves, so
+    // the live frame is as good a centre to measure from as the one the finger
+    // went down on.
+    const rect = card.frames[d.key];
+    if (!rect || !d.reach) return;
+    set(d.key, { ...d.from, scale: (d.from.scale * reach(rect, point)) / d.reach });
+  };
+
+  const release = () => {
+    drag.current = null;
+  };
+
+  const rect = selected ? card.frames[selected] : null;
+
+  return (
+    <div
+      ref={host}
+      className="absolute inset-0 touch-none"
+      onPointerDown={onDown}
+      onPointerMove={onMove}
+      onPointerUp={release}
+      onPointerCancel={release}
+    >
+      {selected && rect && (
+        <div
+          className="absolute border-2 border-[#2D6A4F] pointer-events-none"
+          style={frame(rect)}
+        >
+          {CORNERS.map((corner, i) => (
+            <span
+              key={i}
+              aria-hidden
+              onPointerDown={startScale(selected)}
+              className="absolute w-7 h-7 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center pointer-events-auto"
+              style={{ left: pct(corner.x), top: pct(corner.y) }}
+            >
+              <span className="w-3 h-3 rounded-full bg-white border-2 border-[#2D6A4F] shadow" />
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
 /**
- * One of the card's single-string lines — the owner, the Instagram name, the
- * handle. Omitted entirely when empty; `lib/print.ts` skips empty lines the
- * same way, so the vertical flow matches.
- *
- * Pass `family` to have the line centred on its ink rather than on its advance
- * width (`inkOffset`); the left-aligned lines do not need it.
+ * How far a point sits from a box's centre, in card widths — one number, so a
+ * handle drag reads the same whatever shape the box is. The scale it produces
+ * is that distance now over what it was when the finger went down.
  */
-function Run({
-  spec,
-  text,
-  family = "",
-}: {
-  spec: TypeSpec;
-  text: string;
-  family?: string;
-}) {
-  if (!text) return null;
+function reach(rect: CardRect, point: Point): number {
+  return Math.hypot(
+    point.x - (rect.x + rect.width / 2),
+    hToW(point.y - (rect.y + rect.height / 2)),
+  );
+}
 
-  const style: CSSProperties = {
-    fontSize: cqw(spec.size),
-    fontWeight: spec.weight,
-    color: spec.color,
+/**
+ * Which part a touch landed on: the topmost one whose box holds it, tested in
+ * reverse paint order. The part already being held wins a tie, so a finger
+ * coming back to it never jumps to a neighbour.
+ */
+function hit(
+  card: ResolvedCard,
+  point: Point,
+  selected: AdjustKey | null,
+): AdjustKey | null {
+  const padY = wToH(TOUCH_SLOP);
+  const inside = (key: AdjustKey) => {
+    const rect = card.frames[key];
+    return (
+      !!rect &&
+      point.x >= rect.x - TOUCH_SLOP &&
+      point.x <= rect.x + rect.width + TOUCH_SLOP &&
+      point.y >= rect.y - padY &&
+      point.y <= rect.y + rect.height + padY
+    );
   };
-  if (spec.marginTop) style.marginTop = cqw(spec.marginTop);
-  if (family) {
-    const shift = inkOffset(measureText(text, spec.weight, family));
-    if (shift) style.transform = `translateX(${shift}em)`;
-  }
-
-  return <div style={style}>{text}</div>;
+  if (selected && inside(selected)) return selected;
+  return [...ADJUSTABLE].reverse().find(inside) ?? null;
 }

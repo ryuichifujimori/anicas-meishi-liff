@@ -1,3 +1,4 @@
+import type { CardAdjust } from "./card-adjust";
 import type { MeishiQr } from "./qr";
 
 export type Pet = {
@@ -15,7 +16,6 @@ export type PhotoTransform = {
   // position is the center of the image in canvas coordinates (0-1, normalized to canvas)
   cx: number;
   cy: number;
-  scale: number; // relative to fit-cover scale
 };
 
 export type FormData = {
@@ -24,10 +24,10 @@ export type FormData = {
   photos: (PetPhoto | null)[];
   transforms: PhotoTransform[];
   composedPhoto: string | null; // data URL of composed image
-  // How much the bar in step 4 adds to the gap between two pets, as a fraction
-  // of the card width. 0 is the card as designed; how far either way the bar
-  // reaches depends on the words typed. Only adjustable with 2+ pets.
-  nameSpread: number;
+  // Where the talent has dragged and resized the five movable parts of the
+  // card, one entry per face. Untouched, every part is at the design's own
+  // position and size and the card is byte-for-byte what it always was.
+  adjust: CardAdjust;
   qr: MeishiQr | null; // the styled QR, as both a preview PNG and print outlines
   ig_handle: string;
   ig_name: string;
@@ -47,9 +47,9 @@ export type SubmitPayload = {
   // is drawn as paths; the design's artwork and the photo are images. The QR is
   // part of it, which is why the form no longer sends a separate qr_base64.
   print_base64: string;
-  // The talent's setting for the gap between the pets, as a fraction of the
-  // card width, so a card remade from this payload comes back spaced the way
-  // they left it.
-  name_spread: number;
+  // The talent's own placement of the card's five movable parts, as one object
+  // keyed by face — so a card remade from this payload comes back laid out the
+  // way they left it, and a second face is a key rather than a new field.
+  adjust: CardAdjust;
   line_user_id: string | null;
 };

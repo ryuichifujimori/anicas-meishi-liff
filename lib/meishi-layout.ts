@@ -54,6 +54,24 @@ export const TEMPLATE_PX = { width: 1046, height: 1738 } as const;
 /** CSS `aspect-ratio` value for the preview card box. */
 export const TEMPLATE_ASPECT = `${TEMPLATE_PX.width} / ${TEMPLATE_PX.height}`;
 
+/**
+ * The card's height as a multiple of its width.
+ *
+ * The layout states horizontal measurements as fractions of the card WIDTH and
+ * vertical ones as fractions of the card HEIGHT — exactly how CSS resolves an
+ * absolutely positioned child — while the type's own flow (font sizes, margins,
+ * line boxes) is measured in card widths throughout. These two turn one into
+ * the other, so a distance can be carried from one axis to the other without
+ * either renderer restating the ratio.
+ */
+export const CARD_ASPECT = TEMPLATE_PX.height / TEMPLATE_PX.width;
+
+/** A card-WIDTH fraction as the card-HEIGHT fraction covering the same distance. */
+export const wToH = (v: number) => v / CARD_ASPECT;
+
+/** A card-HEIGHT fraction as the card-WIDTH fraction covering the same distance. */
+export const hToW = (v: number) => v * CARD_ASPECT;
+
 export const ASSETS = {
   /**
    * The design itself. Both renderers place these exact files: the preview as
@@ -70,6 +88,19 @@ export const ASSETS = {
   ribbon: "/meishi-ribbon.png",
   /** The anicas mark placed in the QR's bottom-right corner (500 × 500). */
   logo: "/anicas_logo_br_square.png",
+  /**
+   * The Instagram glyph, lifted off the template onto a transparent ground.
+   *
+   * The talent can move the Instagram line, and the glyph belongs to that line
+   * — but the glyph is DRAWN INTO /meishi-template.png, so it cannot simply be
+   * repositioned. This file is the same pixels: the template's own 103 × 102
+   * ink box (IG_MARK), un-composited from the white it was drawn on, so laying
+   * it back over white reproduces the template's bytes exactly. A renderer
+   * that moves the line paints over the baked glyph and places this one
+   * instead; a renderer that has not been asked to move it leaves the
+   * template's own glyph alone and never loads this file.
+   */
+  igMark: "/meishi-instagram.png",
 } as const;
 
 /** Paper white — also what the bleed area is flooded with. */
@@ -106,6 +137,37 @@ export const LAYOUT = {
   textBlock: { top: 0.6, left: 0.1, width: 0.8 },
   igBlock: { top: 0.845, left: 0.18, width: 0.46 },
   qr: { top: 0.8, right: 0.075, width: 0.265 },
+} as const;
+
+/**
+ * The ribbon's white band, in card-height fractions — measured off
+ * /meishi-ribbon.png as the rows where the band runs unbroken from side to
+ * side (px 785 … 935 of 1738).
+ *
+ * It is the floor the photo is kept above. The photo's lower edge is meant to
+ * be HIDDEN by this band — that is why the slot is allowed to reach down to
+ * .50, past the band's top — so a photo the talent has dragged or grown is
+ * stopped where the band would stop covering it.
+ */
+export const RIBBON_BAND = {
+  top: 785 / TEMPLATE_PX.height,
+  bottom: 936 / TEMPLATE_PX.height,
+} as const;
+
+/**
+ * Where /meishi-template.png draws the Instagram glyph: its ink box, measured
+ * off the file (px 69…171 × 1464…1565), with `left`/`width` as card-width
+ * fractions and `top`/`height` as card-height fractions.
+ *
+ * The glyph travels with the Instagram line when the talent moves it, so both
+ * renderers need to know the box twice over: to paint the baked glyph out, and
+ * to place `ASSETS.igMark` at wherever the line has been put.
+ */
+export const IG_MARK = {
+  left: 69 / TEMPLATE_PX.width,
+  top: 1464 / TEMPLATE_PX.height,
+  width: 103 / TEMPLATE_PX.width,
+  height: 102 / TEMPLATE_PX.height,
 } as const;
 
 /**
@@ -173,6 +235,34 @@ export type TypeSpec = (typeof TYPE)[keyof typeof TYPE];
 export type TypeWeight = (typeof TYPE)[keyof typeof TYPE]["weight"];
 
 /**
+ * The smallest the card sets type, as a fraction of the card width — the size
+ * of `TYPE.breed`, which is the smallest run the design itself uses. Across a
+ * 55 mm card that is 1.82 mm, a hair over 5 pt: the floor printers give for
+ * Japanese text, which is exactly why the design stops there.
+ *
+ * It is arrived at the way every other size on the card is: stated once, as a
+ * fraction of the card, and read off the design rather than invented. A row
+ * the talent shrinks is stopped here. A row the fitting rules have ALREADY
+ * pushed below it — a long breed squeezed to clear its neighbour — cannot be
+ * shrunk any further; it can still be grown.
+ */
+export const MIN_TYPE_SIZE = TYPE.breed.size;
+
+/**
+ * The smallest a printed QR module may be, in millimetres.
+ *
+ * A QR is read off its module grid, so what has to stay big enough is one
+ * module, not the code: a longer Instagram handle needs a denser QR, and the
+ * same square then carries smaller modules. 0.30 mm is a little over four dots
+ * at the PRINT_DPI the card is produced at, and comfortably above the 0.25 mm
+ * offset printing can hold. On the 37-module QR a typical handle produces, it
+ * stops the code at about 79 % of its designed size; see
+ * docs/direct-edit-verification.md, where the smallest QR the form allows is
+ * decoded off the rendered PDF.
+ */
+export const MIN_QR_MODULE_MM = 0.3;
+
+/**
  * Fonts embedded in the print PDF, one file per weight `TYPE` asks for.
  *
  * The card text goes into the PDF as text, not as pixels, so it needs a real
@@ -221,7 +311,14 @@ export type CardTextInput = {
  * separated from the name it belongs to. Every string is trimmed here, so
  * nothing but the pet's own letters reaches either renderer.
  */
-export function cardText(input: CardTextInput) {
+export type CardText = {
+  pets: { name: string; breed: string }[];
+  owner: string;
+  igName: string;
+  igHandle: string;
+};
+
+export function cardText(input: CardTextInput): CardText {
   const owner = input.ownerName.trim();
   const handle = input.igHandle.trim();
 
@@ -237,7 +334,7 @@ export function cardText(input: CardTextInput) {
 }
 
 /** Every character the card will set, for the font loader to size its subset. */
-export const cardGlyphs = (text: ReturnType<typeof cardText>) =>
+export const cardGlyphs = (text: CardText) =>
   text.pets.map((p) => p.name + p.breed).join("") +
   text.owner + text.igName + text.igHandle;
 
@@ -250,9 +347,10 @@ export const cardGlyphs = (text: ReturnType<typeof cardText>) =>
  * text block. Two, three, four pets — it is the same rule with a different
  * count; nothing here branches on how many there are.
  *
- * The bar in step 4 sets one number: how much to add to the gap between two
- * pets, as a fraction of the card width. Because the breed hangs on its name's
- * axis, moving the columns moves both lines by exactly the same amount.
+ * The columns sit one name em apart — the full-width space the line used to be
+ * joined with. Where the two lines then go on the card is not this module's to
+ * say: `lib/card-adjust.ts` moves and resizes each of them from what comes out
+ * of here.
  *
  * Neither line is ever allowed onto a second line or past the block's edges.
  * The names come down in size until they fit; the breeds come down until they
@@ -276,55 +374,9 @@ const inkMid = (m: Measured) => (m.inkLeft + m.inkRight) / 2;
 /** Where the type block sits and how wide it is, in card fractions. */
 type Block = { left: number; width: number };
 
-export type SpreadLimits = { min: number; max: number };
-
-/** Keeps a stored bar value inside what the words currently typed allow. */
-export const clampSpread = (spread: number, limits: SpreadLimits) =>
-  Math.min(limits.max, Math.max(limits.min, spread || 0));
-
-/**
- * The bar's own position, −1 … +1, and the gap it stands for.
- *
- * The travel is not symmetric — a card can usually be opened up much further
- * than it can be closed — but the bar still has to rest in the middle when it
- * is untouched, so each half of it is mapped onto its own end of the travel.
- */
-export const spreadFromBar = (bar: number, limits: SpreadLimits) =>
-  bar < 0 ? -bar * limits.min : bar * limits.max;
-
-export const barFromSpread = (spread: number, limits: SpreadLimits) => {
-  if (spread < 0) return limits.min ? -spread / limits.min : 0;
-  return limits.max ? spread / limits.max : 0;
-};
-
 /** Gap between two columns: one name em — the full-width space the line used
- *  to be joined with — plus whatever the bar adds. */
-const columnGap = (spread: number) => Math.max(0, TYPE.name.size + spread);
-
-/**
- * How far the bar may travel for the words currently typed.
- *
- * `min` closes the gap to nothing: the names' boxes meet, which is as tight as
- * the card can be set. `max` is the point where the names reach the block's
- * edges — and never more than that, because past it the names would have to be
- * set smaller than they already are just to make room for the space between
- * them. On a card whose names already fill the block, `max` is 0 and the bar
- * only tightens.
- */
-export function spreadLimits(
-  names: Measured[],
-  block: Block = LAYOUT.textBlock,
-): SpreadLimits {
-  if (names.length < 2) return { min: 0, max: 0 };
-  const advance = names.reduce((total, m) => total + m.advance, 0);
-  if (!advance) return { min: 0, max: 0 };
-
-  const gaps = names.length - 1;
-  const design = TYPE.name.size;
-  const atRest = Math.min(design, (block.width - gaps * design) / advance);
-  const widest = (block.width - advance * atRest) / gaps;
-  return { min: -design, max: Math.max(0, widest - design) };
-}
+ *  to be joined with. */
+const COLUMN_GAP = TYPE.name.size;
 
 /** Where every pet's words go: one axis each, and the size the two lines end
  *  up at once they have been made to fit. */
@@ -338,7 +390,7 @@ export type PetLayout = {
 /**
  * Lays the columns out.
  *
- * The names are set as one line — measured widths, the bar's gap between them,
+ * The names are set as one line — measured widths, one name em between them,
  * the whole thing centred in the block on its INK rather than on its advance
  * box — and each pet's axis is then wherever its own name's ink centre landed.
  * That is exactly what a single centred line has always done, so a card with
@@ -357,13 +409,12 @@ export type PetLayout = {
 export function layoutPets(
   names: Measured[],
   breeds: Measured[],
-  spread: number,
   block: Block = LAYOUT.textBlock,
 ): PetLayout {
   const n = names.length;
   if (!n) return { axes: [], nameSize: TYPE.name.size, breedSize: TYPE.breed.size };
 
-  const gap = columnGap(spread);
+  const gap = COLUMN_GAP;
   const advance = names.reduce((total, m) => total + m.advance, 0);
   const room = Math.max(0, block.width - (n - 1) * gap);
   const nameSize = advance
@@ -433,6 +484,67 @@ export const inkCentred = (m: Measured, axis: number, size: number) =>
  * leaves two lines on visibly different axes.
  */
 export const inkOffset = (m: Measured) => m.advance / 2 - inkMid(m);
+
+/* ------------------------------------------------------------------ *
+ * Line breaking
+ * ------------------------------------------------------------------ *
+ *
+ * The owner line and the two Instagram lines are flowed rather than placed,
+ * so a long one has to be broken somewhere — and both renderers have to break
+ * it in the same place. The rules live here and each renderer supplies its own
+ * width function, measured in the font it is actually setting.
+ */
+
+const CJK =
+  /[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]/;
+
+/**
+ * Splits text at the points a browser is allowed to break a line with the
+ * default `word-break: normal`: after a space, and between two characters when
+ * either of them is CJK.
+ */
+function segments(text: string): string[] {
+  const chars = Array.from(text);
+  const out: string[] = [];
+  let buf = "";
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i];
+    if (buf && (CJK.test(ch) || CJK.test(chars[i - 1]))) {
+      out.push(buf);
+      buf = "";
+    }
+    buf += ch;
+    if (ch === " ") {
+      out.push(buf);
+      buf = "";
+    }
+  }
+  if (buf) out.push(buf);
+  return out;
+}
+
+/** Greedy line breaking. A single unbreakable chunk wider than the box
+ *  overflows rather than being split, matching `overflow-wrap: normal`. */
+export function wrapText(
+  width: (text: string) => number,
+  text: string,
+  maxWidth: number,
+): string[] {
+  const parts = segments(text);
+  const lines: string[] = [];
+  let line = "";
+  for (const part of parts) {
+    const candidate = line + part;
+    if (line && width(candidate.trimEnd()) > maxWidth) {
+      lines.push(line.trimEnd());
+      line = part.trimStart();
+    } else {
+      line = candidate;
+    }
+  }
+  if (line.trimEnd()) lines.push(line.trimEnd());
+  return lines.length ? lines : [text];
+}
 
 /* ------------------------------------------------------------------ *
  * Unit helpers (so neither renderer restates a number)

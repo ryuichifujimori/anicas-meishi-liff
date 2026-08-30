@@ -18,13 +18,14 @@ export function Step5Confirm({ data, submitting, error, onSubmit, onBack }: Prop
 
       <MeishiPreview
         composedPhoto={data.composedPhoto}
-        nameSpread={data.nameSpread}
         qrSrc={data.qr?.png ?? null}
+        qrPitch={data.qr?.modulePitch ?? null}
         pets={data.pets}
         petCount={data.petCount}
         igHandle={data.ig_handle}
         igName={data.ig_name}
         ownerName={data.owner_name}
+        adjust={data.adjust.front}
       />
 
       <dl className="bg-white rounded-lg border divide-y">

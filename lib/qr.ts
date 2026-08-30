@@ -48,6 +48,15 @@ export type MeishiQr = {
   svg: string;
   /** Side of the square coordinate space `svg` and `overlay` are given in. */
   size: number;
+  /**
+   * One module's pitch, as a fraction of the QR box.
+   *
+   * The QR gets denser as the handle gets longer, so the same square carries
+   * smaller modules — and it is the MODULE, not the code, that has to stay big
+   * enough to be read off paper. `lib/card-adjust.ts` turns this into how far
+   * the talent may shrink the QR.
+   */
+  modulePitch: number;
   /** White backing disc and the logo box that sits inside it. */
   overlay: {
     cx: number;
@@ -88,13 +97,13 @@ export async function generateMeishiQr(handle: string): Promise<MeishiQr | null>
     backgroundOptions: { color: "transparent" },
   });
 
-  const overlay = overlayGeometry(qr);
+  const { overlay, modulePitch } = geometry(qr);
   const [png, svg] = await Promise.all([
     rasterise(qr, overlay),
     qr.getRawData("svg").then(readText),
   ]);
 
-  return { png, svg, size: QR_SIZE, overlay };
+  return { png, svg, size: QR_SIZE, modulePitch, overlay };
 }
 
 /**
@@ -112,9 +121,9 @@ export async function generateMeishiQr(handle: string): Promise<MeishiQr | null>
  * visually matches the three eyes. That is also where the design's own baked
  * mark is, which the circle has to cover; do not move or resize it.
  */
-function overlayGeometry(qr: {
+function geometry(qr: {
   _qr?: { getModuleCount(): number };
-}): MeishiQr["overlay"] {
+}): { overlay: MeishiQr["overlay"]; modulePitch: number } {
   const moduleCount = qr._qr?.getModuleCount() ?? 37; // fallback ≈ version 5
   const dotSize = Math.floor((QR_SIZE - 2 * QR_MARGIN) / moduleCount);
   const origin = Math.floor((QR_SIZE - moduleCount * dotSize) / 2);
@@ -124,10 +133,13 @@ function overlayGeometry(qr: {
   const radius = (FINDER_MODULES * dotSize) / 2;
   const size = radius * 2 * LOGO_IN_DISC;
   return {
-    cx: centre,
-    cy: centre,
-    radius,
-    logo: { x: centre - size / 2, y: centre - size / 2, size },
+    overlay: {
+      cx: centre,
+      cy: centre,
+      radius,
+      logo: { x: centre - size / 2, y: centre - size / 2, size },
+    },
+    modulePitch: dotSize / QR_SIZE,
   };
 }
 
