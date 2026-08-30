@@ -8,6 +8,7 @@ import { Step3Account } from "./components/Step3Account";
 import { Step4Photos } from "./components/Step4Photos";
 import { Step5Confirm } from "./components/Step5Confirm";
 import type { FormData, Pet, PetPhoto, PhotoTransform } from "@/lib/types";
+import { PET_SPREAD_BAR } from "@/lib/meishi-layout";
 import { closeLiffWindow, getLineUserId, initLiff } from "@/lib/liff";
 import { generateMeishiQr } from "@/lib/qr";
 import { buildSubmitPayload, postMeishiOrder } from "@/lib/submit";
@@ -23,6 +24,7 @@ const initialData: FormData = {
   photos: [null, null, null],
   transforms: [initialTransform(), initialTransform(), initialTransform()],
   composedPhoto: null,
+  nameSpread: PET_SPREAD_BAR.default,
   qr: null,
   ig_handle: "",
   ig_name: "",
@@ -71,6 +73,8 @@ export default function Page() {
     setData((d) => ({ ...d, transforms }));
   const setComposed = (composedPhoto: string) =>
     setData((d) => ({ ...d, composedPhoto }));
+  const setNameSpread = (nameSpread: number) =>
+    setData((d) => ({ ...d, nameSpread }));
   const setAccount = (v: { ig_handle: string; ig_name: string; owner_name: string }) =>
     setData((d) => ({ ...d, ...v }));
 
@@ -166,6 +170,7 @@ export default function Page() {
             photos={data.photos}
             transforms={data.transforms}
             composedPhoto={data.composedPhoto}
+            nameSpread={data.nameSpread}
             qrSrc={data.qr?.png ?? null}
             igHandle={data.ig_handle}
             igName={data.ig_name}
@@ -173,6 +178,7 @@ export default function Page() {
             onPhotosChange={setPhotos}
             onTransformsChange={setTransforms}
             onComposed={setComposed}
+            onNameSpreadChange={setNameSpread}
             onNext={next}
             onBack={back}
           />

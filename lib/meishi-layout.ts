@@ -42,25 +42,32 @@ export const mmToPt = (mm: number) => (mm * 72) / MM_PER_INCH;
  * Artwork
  * ------------------------------------------------------------------ */
 
-/** Intrinsic size of /meishi-template.png and /meishi-ribbon.png. */
+/**
+ * Intrinsic size of /meishi-template.png and /meishi-ribbon.png.
+ *
+ * These are also what goes into the print PDF. Across the 55 mm card that is
+ * 1046 / (55 / 25.4) ≈ 483 dpi — comfortably above the 350 dpi the printer
+ * asks for, so the design needs no vector stand-in to print cleanly.
+ */
 export const TEMPLATE_PX = { width: 1046, height: 1738 } as const;
 
 /** CSS `aspect-ratio` value for the preview card box. */
 export const TEMPLATE_ASPECT = `${TEMPLATE_PX.width} / ${TEMPLATE_PX.height}`;
 
 export const ASSETS = {
-  /** Raster design — what the on-screen preview shows. */
+  /**
+   * The design itself. Both renderers place these exact files: the preview as
+   * `<img>`, the print PDF as an embedded PNG at its native pixel size.
+   *
+   * They are deliberately NOT traced into outlines on the way to the PDF. An
+   * auto-trace of a bitmap follows the pixel grid, so the paw prints, the
+   * Instagram glyph and the ribbon's baked caption came out of it with a
+   * staircase along every curve — worse than the artwork it replaced. The
+   * original pixels, placed at ≈483 dpi (see TEMPLATE_PX), carry the design's
+   * own antialiasing instead.
+   */
   template: "/meishi-template.png",
   ribbon: "/meishi-ribbon.png",
-  /**
-   * The same two pieces of artwork as outlines, in single-page vector PDFs.
-   * `lib/print.ts` places these instead of the PNGs, so the paw prints, the
-   * ribbon line-art, the baked caption and the Instagram glyph print as
-   * shapes rather than pixels. Regenerated from the PNGs above by
-   * `scripts/build-print-vectors.py` — the PNGs stay the design source.
-   */
-  templateVector: "/meishi-template.pdf",
-  ribbonVector: "/meishi-ribbon.pdf",
   /** The anicas mark placed in the QR's bottom-right corner (500 × 500). */
   logo: "/anicas_logo_br_square.png",
 } as const;
@@ -109,6 +116,38 @@ export const LAYOUT = {
 export const PHOTO_SLOT_ASPECT =
   (LAYOUT.photo.width * TEMPLATE_PX.width) /
   (LAYOUT.photo.height * TEMPLATE_PX.height);
+
+/** The QR's side on the finished card, in mm — it is square. */
+export const QR_MM = LAYOUT.qr.width * CARD_TRIM_MM.width;
+
+/**
+ * Diameter of the anicas mark on the card, white backing disc included.
+ *
+ * The mark sits inside the disc, and the disc is inscribed in the QR's
+ * bottom-right corner — tangent to the matrix's right and bottom edges, the
+ * same corner it has always hugged. Stated here in millimetres because that is
+ * how it is specified and measured; `lib/qr.ts` turns it into its own
+ * coordinates through QR_MM.
+ *
+ * THIS IS AS BIG AS THE MARK CAN GET. The disc hides every module it covers,
+ * and error-correction level H has to reconstruct them, so the size is capped
+ * by what still scans. Measured on cards the form actually produced, decoded
+ * with zxing-cpp (docs/print-quality-verification.md):
+ *
+ *   7.4 mm  read at no resolution at all
+ *   7.0 mm  read at 200/350/600/1200 dpi, failed at 150 and 300
+ *   6.8 mm  read at every resolution for a 12-character handle, but lost
+ *           150 dpi at 14 — worse than the card is now
+ *   6.4 mm  identical to the card as it stands, at 150/200/300/350/600/1200
+ *           dpi, for every handle length Instagram allows (30 characters,
+ *           which is a 41-module QR)
+ *
+ * Raising it means proving the same table again.
+ */
+export const LOGO_DISC_MM = 6.4;
+
+/** The mark's share of that diameter — the proportion the card has always had. */
+export const LOGO_IN_DISC = 0.65934;
 
 /* ------------------------------------------------------------------ *
  * Type
@@ -173,13 +212,6 @@ export const PRINT_FALLBACK_FONT = "/fonts/NotoEmoji-400.ttf";
  * Copy
  * ------------------------------------------------------------------ */
 
-/**
- * What separates the pets on a card that carries more than one: a full-width
- * space, exactly as on the printed card. No "&" between names and no "/"
- * between breeds.
- */
-export const PET_SEPARATOR = "\u3000";
-
 export type CardTextInput = {
   pets: Pet[];
   petCount: number;
@@ -190,17 +222,19 @@ export type CardTextInput = {
 
 /**
  * Every string the card shows, composed once for both renderers — so the
- * separators and the 【owner：…】/@ decoration cannot drift between the
- * preview and the print PDF either. An empty run is returned as "" and is
- * skipped by both renderers, closing its gap in the vertical flow.
+ * 【owner：…】/@ decoration cannot drift between the preview and the print PDF
+ * either. An empty run is skipped by both renderers, closing its gap in the
+ * vertical flow.
+ *
+ * The pet lines come back as ONE STRING PER PET rather than as a joined line:
+ * what goes between them is a measured gap (`petGap`), not a character, which
+ * is what lets the talent open the names up. Each string is trimmed here, so
+ * nothing but the pet's own letters reaches either renderer.
  */
 export function cardText(input: CardTextInput) {
   const visible = input.pets.slice(0, input.petCount);
   const list = (field: (pet: Pet) => string) =>
-    visible
-      .map((pet) => field(pet).trim())
-      .filter(Boolean)
-      .join(PET_SEPARATOR);
+    visible.map((pet) => field(pet).trim()).filter(Boolean);
 
   const owner = input.ownerName.trim();
   const handle = input.igHandle.trim();
@@ -213,6 +247,46 @@ export function cardText(input: CardTextInput) {
     igHandle: handle && `@${handle}`,
   };
 }
+
+/* ------------------------------------------------------------------ *
+ * How far apart the pets sit
+ * ------------------------------------------------------------------ */
+
+/**
+ * Travel of the spacing bar in step 4, as a fraction of the card width.
+ *
+ * It is one breed-line em, which is also exactly the gap the breed line has by
+ * default — so the bar's left stop closes that gap and its right stop doubles
+ * it, and the whole range is ±1.8 mm on a 55 mm card.
+ */
+export const PET_SPREAD_RANGE = TYPE.breed.size;
+
+/**
+ * The bar itself, as step 4 hands it to `<input type="range">`: its default is
+ * its centre, so a talent who never touches it gets the card as designed.
+ */
+export const PET_SPREAD_BAR = {
+  min: -1,
+  max: 1,
+  step: 0.05,
+  default: 0,
+} as const;
+
+export const clampSpread = (spread: number) =>
+  Math.min(PET_SPREAD_BAR.max, Math.max(PET_SPREAD_BAR.min, spread || 0));
+
+/**
+ * Gap between two pets on one line, as a fraction of the card width.
+ *
+ * One em by default — the width of the full-width space the line used to be
+ * joined with, so the bar at rest reproduces the card exactly as it was. The
+ * bar then adds the SAME amount to every line, which is what keeps a pet's
+ * name and its breed moving together: widening the gap by d slides each
+ * outer pet d/2 (two pets) or d (three) away from the card's centre line, on
+ * the name line and the breed line alike.
+ */
+export const petGap = (spec: TypeSpec, spread: number) =>
+  spec.size + clampSpread(spread) * PET_SPREAD_RANGE;
 
 /* ------------------------------------------------------------------ *
  * Unit helpers (so neither renderer restates a number)

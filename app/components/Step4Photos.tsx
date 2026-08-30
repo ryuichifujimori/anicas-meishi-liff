@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import type { Pet, PetPhoto, PhotoTransform } from "@/lib/types";
 import { loadAndNormalizeImage } from "@/lib/image";
+import { PET_SPREAD_BAR } from "@/lib/meishi-layout";
 import { PhotoComposer } from "./PhotoComposer";
 import { MeishiPreview } from "./MeishiPreview";
 
@@ -12,6 +13,8 @@ type Props = {
   photos: (PetPhoto | null)[];
   transforms: PhotoTransform[];
   composedPhoto: string | null;
+  /** The name-spacing bar's value. 0 is the card as designed. */
+  nameSpread: number;
   qrSrc: string | null;
   igHandle: string;
   igName: string;
@@ -19,6 +22,7 @@ type Props = {
   onPhotosChange: (photos: (PetPhoto | null)[]) => void;
   onTransformsChange: (t: PhotoTransform[]) => void;
   onComposed: (dataUrl: string) => void;
+  onNameSpreadChange: (spread: number) => void;
   onNext: () => void;
   onBack: () => void;
 };
@@ -29,6 +33,7 @@ export function Step4Photos({
   photos,
   transforms,
   composedPhoto,
+  nameSpread,
   qrSrc,
   igHandle,
   igName,
@@ -36,6 +41,7 @@ export function Step4Photos({
   onPhotosChange,
   onTransformsChange,
   onComposed,
+  onNameSpreadChange,
   onNext,
   onBack,
 }: Props) {
@@ -122,6 +128,28 @@ export function Step4Photos({
             }}
             onComposed={onComposed}
           />
+
+          {/* How far apart the pets sit. Nothing to space out with a single
+              pet, so the bar only exists from two upwards. It rides in the
+              same block as the zoom bar above rather than opening a section
+              of its own — both are the same kind of nudge to the artwork. */}
+          {petCount > 1 && (
+            <div className="space-y-2">
+              <label className="block text-sm font-medium" htmlFor="name-spread">
+                名前の間隔
+              </label>
+              <input
+                id="name-spread"
+                type="range"
+                min={PET_SPREAD_BAR.min}
+                max={PET_SPREAD_BAR.max}
+                step={PET_SPREAD_BAR.step}
+                value={nameSpread}
+                onChange={(e) => onNameSpreadChange(parseFloat(e.target.value))}
+                className="w-full accent-[#2D6A4F]"
+              />
+            </div>
+          )}
         </div>
       )}
 
@@ -130,6 +158,7 @@ export function Step4Photos({
           <h3 className="font-semibold text-sm">名刺プレビュー</h3>
           <MeishiPreview
             composedPhoto={composedPhoto}
+            nameSpread={nameSpread}
             qrSrc={qrSrc}
             pets={pets}
             petCount={petCount}

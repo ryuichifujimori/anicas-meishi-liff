@@ -20,6 +20,7 @@ import {
   type TypeWeight,
   cardText,
   mmToPt,
+  petGap,
 } from "./meishi-layout";
 
 /**
@@ -29,15 +30,17 @@ import {
  * `lib/meishi-layout.ts` definition, onto a 61 × 97 mm page (55 × 91 mm card
  * + 3 mm bleed) — but as a real PDF rather than as one flattened raster:
  *
- *   template / ribbon  vector outlines, placed from public/meishi-*.pdf
+ *   template / ribbon  the design's own PNGs, embedded whole (≈483 dpi there)
  *   text               live text in an embedded font, selectable and searchable
  *   QR                 the module shapes drawn as paths
  *   anicas mark        the 500 × 500 master, embedded whole and scaled down
- *   photo              the only image, resampled to 350 dpi
+ *   photo              resampled to 350 dpi
  *
- * so nothing but the photograph carries a pixel grid — which is how the real
- * Illustrator card is built, and where the difference in crispness was coming
- * from.
+ * The talent's own words are the part that has to stay sharp at any size, and
+ * they are the part that is type. The drawn design is left as the pixels it
+ * was drawn as: tracing it into outlines put a staircase along every curve of
+ * the paw prints, the Instagram glyph and the ribbon's caption, because a
+ * trace can only follow the pixel grid it is given.
  *
  * This module is deliberately standalone: it takes plain data, touches no
  * React state and is not tied to the submit button, so the same call can be
@@ -51,6 +54,8 @@ export type MeishiPrintInput = {
   qr: MeishiQr | null;
   pets: Pet[];
   petCount: 1 | 2 | 3;
+  /** The step-4 bar: how far apart the pets sit. 0 is the card as designed. */
+  nameSpread: number;
   igHandle: string;
   igName: string;
   ownerName: string;
@@ -117,18 +122,18 @@ export async function generateMeishiPrintPdf(
   });
 
   const [template, ribbon, photo, logo, fonts] = await Promise.all([
-    embedVector(pdf, ASSETS.templateVector),
-    embedVector(pdf, ASSETS.ribbonVector),
+    embedArtwork(pdf, ASSETS.template),
+    embedArtwork(pdf, ASSETS.ribbon),
     input.composedPhoto
       ? embedPhoto(pdf, input.composedPhoto, slot, options)
       : null,
-    input.qr ? embedLogo(pdf) : null,
-    loadFonts(pdf, Object.values(text).join("")),
+    input.qr ? embedArtwork(pdf, ASSETS.logo) : null,
+    loadFonts(pdf, Object.values(text).flat().join("")),
   ]);
 
   // Same paint order as MeishiPreview: template → photo → ribbon → text → QR.
-  const placeCard = (art: typeof template) =>
-    page.drawPage(art, {
+  const placeCard = (art: PDFImage) =>
+    page.drawImage(art, {
       x: card.x,
       y: pageH - card.top - card.height,
       width: card.width,
@@ -157,10 +162,11 @@ export async function generateMeishiPrintPdf(
     pageHeight: pageH,
     fonts,
     lib,
+    spread: input.nameSpread,
     runs: [
-      { spec: TYPE.breed, text: text.breeds },
-      { spec: TYPE.name, text: text.names },
-      { spec: TYPE.owner, text: text.owner },
+      { spec: TYPE.breed, parts: text.breeds },
+      { spec: TYPE.name, parts: text.names },
+      { spec: TYPE.owner, parts: [text.owner] },
     ],
   });
 
@@ -171,9 +177,10 @@ export async function generateMeishiPrintPdf(
     pageHeight: pageH,
     fonts,
     lib,
+    spread: input.nameSpread,
     runs: [
-      { spec: TYPE.igName, text: text.igName },
-      { spec: TYPE.igHandle, text: text.igHandle },
+      { spec: TYPE.igName, parts: [text.igName] },
+      { spec: TYPE.igHandle, parts: [text.igHandle] },
     ],
   });
 
@@ -258,15 +265,16 @@ async function fetchBytes(url: string): Promise<Uint8Array> {
   return new Uint8Array(await res.arrayBuffer());
 }
 
-/** Places a single-page vector PDF as a form XObject — outlines, no pixels. */
-async function embedVector(pdf: PDFDocument, url: string) {
-  const [embedded] = await pdf.embedPdf(await fetchBytes(url));
-  return embedded;
-}
-
-/** The anicas mark, embedded at its native 500 × 500 and scaled on the page. */
-async function embedLogo(pdf: PDFDocument): Promise<PDFImage> {
-  return pdf.embedPng(await fetchBytes(ASSETS.logo));
+/**
+ * A piece of the drawn design, embedded byte-for-byte as the PNG it is.
+ *
+ * No trace, no resample, no re-encode: the file that goes into the PDF is the
+ * file the designer drew, placed at whatever size the card wants it. The
+ * template and ribbon land at ≈483 dpi that way and the anicas mark far
+ * higher, so none of them needs the pixel grid the photo has to live with.
+ */
+async function embedArtwork(pdf: PDFDocument, url: string): Promise<PDFImage> {
+  return pdf.embedPng(await fetchBytes(url));
 }
 
 /**
@@ -462,12 +470,33 @@ function anchor(
  * Text
  * ------------------------------------------------------------------ */
 
-/** One weight, plus whatever is needed for characters it does not carry. */
-type FontSet = {
-  primary: PDFFont;
-  covers: (codePoint: number) => boolean;
-  fallback?: PDFFont;
+/**
+ * The slice of fontkit's API this module uses. `@pdf-lib/fontkit` ships no
+ * type declarations, and pdf-lib's own `PDFFont` exposes advance widths but
+ * not the glyph outlines the ink measurements below need.
+ */
+type FontkitFont = {
+  unitsPerEm: number;
+  hasGlyphForCodePoint(codePoint: number): boolean;
+  layout(text: string): {
+    glyphs: { advanceWidth: number; bbox?: { minX: number; maxX: number } }[];
+  };
 };
+
+/** Side bearings: the empty space a glyph carries either side of its ink,
+ *  as a fraction of the em. */
+type Bearings = { lsb: number; rsb: number };
+
+/** One embedded font file — what pdf-lib draws with, plus the metrics it
+ *  does not expose. */
+type Face = {
+  pdf: PDFFont;
+  covers(codePoint: number): boolean;
+  bearings(ch: string): Bearings;
+};
+
+/** One weight, plus whatever is needed for characters it does not carry. */
+type FontSet = { primary: Face; fallback?: Face };
 
 type Fonts = Record<TypeWeight, FontSet>;
 
@@ -483,33 +512,54 @@ async function loadFonts(pdf: PDFDocument, text: string): Promise<Fonts> {
   const fontkit = (await import("@pdf-lib/fontkit")).default;
   const weights = Object.keys(PRINT_FONTS).map(Number) as TypeWeight[];
 
+  const face = async (url: string): Promise<Face> => {
+    const bytes = await fetchBytes(url);
+    const metrics = fontkit.create(bytes) as unknown as FontkitFont;
+    return {
+      pdf: await pdf.embedFont(bytes, { subset: true }),
+      covers: (codePoint) => metrics.hasGlyphForCodePoint(codePoint),
+      bearings: (ch) => {
+        const glyph = metrics.layout(ch).glyphs[0];
+        const box = glyph?.bbox;
+        // A glyph with no ink — a space — reports an empty box.
+        if (!box || !Number.isFinite(box.minX) || !Number.isFinite(box.maxX)) {
+          return { lsb: 0, rsb: 0 };
+        }
+        return {
+          lsb: box.minX / metrics.unitsPerEm,
+          rsb: (glyph.advanceWidth - box.maxX) / metrics.unitsPerEm,
+        };
+      },
+    };
+  };
+
   const loaded = await Promise.all(
-    weights.map(async (weight) => {
-      const bytes = await fetchBytes(PRINT_FONTS[weight]);
-      const metrics = fontkit.create(bytes) as unknown as {
-        hasGlyphForCodePoint(codePoint: number): boolean;
-      };
-      return {
-        weight,
-        primary: await pdf.embedFont(bytes, { subset: true }),
-        covers: (codePoint: number) => metrics.hasGlyphForCodePoint(codePoint),
-      };
-    }),
+    weights.map(async (weight) => [weight, await face(PRINT_FONTS[weight])] as const),
   );
 
   const uncovered = Array.from(text).some((ch) =>
-    loaded.some(({ covers }) => !covers(ch.codePointAt(0) ?? 0)),
+    loaded.some(([, f]) => !f.covers(ch.codePointAt(0) ?? 0)),
   );
-  const fallback = uncovered
-    ? await pdf.embedFont(await fetchBytes(PRINT_FALLBACK_FONT), { subset: true })
-    : undefined;
+  const fallback = uncovered ? await face(PRINT_FALLBACK_FONT) : undefined;
 
   return Object.fromEntries(
-    loaded.map(({ weight, primary, covers }) => [weight, { primary, covers, fallback }]),
+    loaded.map(([weight, primary]) => [weight, { primary, fallback }]),
   ) as Fonts;
 }
 
-type Run = { spec: TypeSpec; text: string };
+/**
+ * One run of the card's type: the pets' own words, one string each, or a
+ * single string for the lines that are not per-pet.
+ */
+type Run = { spec: TypeSpec; parts: string[] };
+
+/**
+ * A measured piece of a line. Either a chunk of text, or — with an empty
+ * `text` — the gap that holds two pets apart.
+ */
+type Token = { text: string; width: number };
+
+const inked = (token: Token) => token.text.trim().length > 0;
 
 /**
  * Lays out a stack of text runs the way the browser lays out the preview's
@@ -527,56 +577,143 @@ function drawRuns(
     pageHeight: number;
     fonts: Fonts;
     lib: PdfLib;
+    /** The step-4 bar, applied to every run's pet gap alike. */
+    spread: number;
     runs: Run[];
   },
 ) {
   let top = opts.block.top;
 
   for (const run of opts.runs) {
-    if (!run.text) continue;
+    const parts = run.parts.filter(Boolean);
+    if (!parts.length) continue;
 
     const font = opts.fonts[run.spec.weight];
     const size = run.spec.size * opts.cardWidth;
     const colour = ink(opts.lib, run.spec.color);
     const width = (text: string) => measure(font, text, size);
+    const gap = petGap(run.spec, opts.spread) * opts.cardWidth;
 
     const lineBox = LINE_HEIGHT * size;
     // CSS centres the font's content area (ascent + descent) in the line box
     // and hangs the glyphs off its top.
-    const halfLeading = (lineBox - font.primary.heightAtSize(size)) / 2;
+    const halfLeading = (lineBox - font.primary.pdf.heightAtSize(size)) / 2;
     const baseline =
-      halfLeading + font.primary.heightAtSize(size, { descender: false });
+      halfLeading + font.primary.pdf.heightAtSize(size, { descender: false });
 
     top += run.spec.marginTop * opts.cardWidth;
 
-    for (const line of wrapText(width, run.text, opts.block.width)) {
-      let x =
-        opts.align === "center"
-          ? opts.block.x + (opts.block.width - width(line)) / 2
-          : opts.block.x;
-      for (const piece of splitByFont(font, line)) {
-        page.drawText(piece.text, {
-          x,
-          y: opts.pageHeight - (top + baseline),
-          size,
-          font: piece.font,
-          color: colour,
-        });
-        x += piece.font.widthOfTextAtSize(piece.text, size);
+    for (const line of wrapLine(tokenise(parts, gap, width), opts.block.width)) {
+      let x = opts.block.x;
+      if (opts.align === "center") x += offsetToCentre(font, line, size, opts.block.width);
+
+      for (const token of line) {
+        for (const piece of splitByFont(font, token.text)) {
+          page.drawText(piece.text, {
+            x,
+            y: opts.pageHeight - (top + baseline),
+            size,
+            font: piece.font.pdf,
+            color: colour,
+          });
+          x += piece.font.pdf.widthOfTextAtSize(piece.text, size);
+        }
+        if (!token.text) x += token.width; // the gap between two pets
       }
       top += lineBox;
     }
   }
 }
 
+/**
+ * How far a line has to move to sit centred in its block.
+ *
+ * Centred on the INK, not on the advance box. A Japanese glyph is drawn inside
+ * a full-width em and carries whatever is left over as side bearings, and
+ * those differ wildly from glyph to glyph — the ト that opens トイプードル
+ * hangs 0.30 em of empty space off its left, where the ペ that opens ペコ
+ * hangs 0.04. Centring the advance box therefore leaves the breed line and the
+ * name line on visibly different axes (0.44 mm apart on the real card, the
+ * name reading left of the breed). Taking the two outer bearings off first is
+ * what "centred" means to the eye, and it is the same rule the preview
+ * follows, so the two agree.
+ */
+function offsetToCentre(
+  font: FontSet,
+  line: Token[],
+  size: number,
+  blockWidth: number,
+): number {
+  const advance = line.reduce((total, token) => total + token.width, 0);
+  const marks = line.filter(inked);
+  if (!marks.length) return (blockWidth - advance) / 2;
+
+  const first = Array.from(marks[0].text.trimStart())[0];
+  const tail = Array.from(marks[marks.length - 1].text.trimEnd());
+  const last = tail[tail.length - 1];
+  const lsb = pickFont(font, first).bearings(first).lsb * size;
+  const rsb = pickFont(font, last).bearings(last).rsb * size;
+
+  return (blockWidth - advance) / 2 - (lsb - rsb) / 2;
+}
+
+/**
+ * Cuts a run into the pieces a line may be broken between, each measured: the
+ * break-segments of every part, with the gap between two pets standing as a
+ * piece of its own.
+ */
+function tokenise(
+  parts: string[],
+  gap: number,
+  width: (text: string) => number,
+): Token[] {
+  const out: Token[] = [];
+  for (const part of parts) {
+    if (out.length) out.push({ text: "", width: gap });
+    for (const seg of segments(part)) out.push({ text: seg, width: width(seg) });
+  }
+  return out;
+}
+
+/** Greedy line breaking. A single unbreakable piece wider than the box
+ *  overflows rather than being split, matching `overflow-wrap: normal`. */
+function wrapLine(tokens: Token[], maxWidth: number): Token[][] {
+  // Trailing blanks — a space, or the gap a break has just swallowed — do not
+  // count towards the line's width, exactly as a trailing space does not.
+  const trim = (line: Token[]) => {
+    const end = line.reduce((last, t, i) => (inked(t) ? i : last), -1);
+    return line.slice(0, end + 1);
+  };
+  const widthOf = (line: Token[]) =>
+    trim(line).reduce((total, t) => total + t.width, 0);
+
+  const lines: Token[][] = [];
+  let line: Token[] = [];
+  for (const token of tokens) {
+    if (line.length && widthOf([...line, token]) > maxWidth) {
+      lines.push(trim(line));
+      line = inked(token) ? [token] : [];
+    } else {
+      line.push(token);
+    }
+  }
+  const last = trim(line);
+  if (last.length) lines.push(last);
+  return lines;
+}
+
+/** The face that can set a given character: the run's own, or the fallback. */
+function pickFont(font: FontSet, ch: string): Face {
+  return font.primary.covers(ch.codePointAt(0) ?? 0) || !font.fallback
+    ? font.primary
+    : font.fallback;
+}
+
 /** Splits a line into the longest runs that one font can set on its own. */
-function splitByFont(font: FontSet, line: string): { font: PDFFont; text: string }[] {
-  const pieces: { font: PDFFont; text: string }[] = [];
+function splitByFont(font: FontSet, line: string): { font: Face; text: string }[] {
+  const pieces: { font: Face; text: string }[] = [];
   for (const ch of Array.from(line)) {
-    const chosen =
-      font.covers(ch.codePointAt(0) ?? 0) || !font.fallback
-        ? font.primary
-        : font.fallback;
+    const chosen = pickFont(font, ch);
     const last = pieces[pieces.length - 1];
     if (last && last.font === chosen) last.text += ch;
     else pieces.push({ font: chosen, text: ch });
@@ -586,13 +723,13 @@ function splitByFont(font: FontSet, line: string): { font: PDFFont; text: string
 
 function measure(font: FontSet, text: string, size: number): number {
   return splitByFont(font, text).reduce(
-    (total, piece) => total + piece.font.widthOfTextAtSize(piece.text, size),
+    (total, piece) => total + piece.font.pdf.widthOfTextAtSize(piece.text, size),
     0,
   );
 }
 
 const CJK =
-  /[　-〿぀-ゟ゠-ヿ㐀-䶿一-鿿豈-﫿＀-￯]/;
+  /[　-〿぀-ゟ゠-ヿ㐀-䶿一-鿿豈-﫿＀-￯]/;
 
 /**
  * Splits text at the points a browser is allowed to break a line with the
@@ -617,29 +754,6 @@ function segments(text: string): string[] {
   }
   if (buf) out.push(buf);
   return out;
-}
-
-/** Greedy line breaking. A single unbreakable chunk wider than the box
- *  overflows rather than being split, matching `overflow-wrap: normal`. */
-function wrapText(
-  width: (text: string) => number,
-  text: string,
-  maxWidth: number,
-): string[] {
-  const parts = segments(text);
-  const lines: string[] = [];
-  let line = "";
-  for (const part of parts) {
-    const candidate = line + part;
-    if (line && width(candidate.trimEnd()) > maxWidth) {
-      lines.push(line.trimEnd());
-      line = part.trimStart();
-    } else {
-      line = candidate;
-    }
-  }
-  if (line.trimEnd()) lines.push(line.trimEnd());
-  return lines.length ? lines : [text];
 }
 
 /* ------------------------------------------------------------------ *
