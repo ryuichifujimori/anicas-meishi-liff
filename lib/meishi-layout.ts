@@ -112,7 +112,7 @@ export const PAPER_COLOR = "#FFFFFF";
  *
  * Calibrated against the real reference card (public/sample-meishi.png,
  * 1070 × 1778). Measured landmarks (as a fraction of the card):
- *   photo slot              top .029, left .05, w .90, bottom .50 (overlaps ribbon)
+ *   photo slot              top .029, left .05, w .90, bottom .4924 (overlaps ribbon)
  *   ribbon white band       top .45, box bottom .536 (tails reach ~.575)
  *   breed / name / owner    y ≈ .61 / .66 / .71
  *   Instagram icon          x ≈ .06–.16, y ≈ .84–.90 (drawn in the template)
@@ -122,18 +122,27 @@ export const PAPER_COLOR = "#FFFFFF";
  *   anicas mark (bottom-R)  x ≈ .88–.91, y ≈ .93–.95
  *
  * Z-ORDER (critical): the photo extends DOWN past the ribbon band top so its
- * bottom sits at ~.50 (≈ middle of the white band), then the ribbon overlay
+ * bottom sits inside the white band, then the ribbon overlay
  * (/meishi-ribbon.png — the ribbon lifted off the template onto a transparent
  * background) is drawn ON TOP of the photo. This reproduces the real card,
  * where the ribbon's white band hides the photo's lower edge and the photo
  * peeks out around the band.
+ *
+ * The slot's BOTTOM is measured off the real card rather than rounded: the
+ * photo's lower edge has to land where the ribbon's tails begin, or it stops
+ * in the open just below them and leaves a square corner showing. Aligning
+ * public/sample-meishi.png to the template by the ribbon (its own outline is
+ * in both: x 56…990 ↔ 54…1009, y 785…1000 ↔ 800…1020, confirmed on the
+ * Instagram glyph to within a pixel) puts the real card's photo edge at
+ * sample row 872.5 — card height .49244, i.e. .4924 − .029 = .4634 of slot.
+ * The old .471 put it .68 mm lower, which is what showed.
  *
  * `top`/`height` are fractions of the card HEIGHT; `left`/`right`/`width` are
  * fractions of the card WIDTH — exactly how CSS resolves them for an
  * absolutely positioned child, so the preview and the print file agree.
  */
 export const LAYOUT = {
-  photo: { top: 0.029, left: 0.05, width: 0.9, height: 0.471 },
+  photo: { top: 0.029, left: 0.05, width: 0.9, height: 0.4634 },
   textBlock: { top: 0.6, left: 0.1, width: 0.8 },
   igBlock: { top: 0.845, left: 0.18, width: 0.46 },
   qr: { top: 0.8, right: 0.075, width: 0.265 },
