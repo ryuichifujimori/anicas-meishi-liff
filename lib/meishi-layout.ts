@@ -89,19 +89,6 @@ export const ASSETS = {
   ribbon: "/meishi-ribbon.png",
   /** The anicas mark placed in the QR's bottom-right corner (500 × 500). */
   logo: "/anicas_logo_br_square.png",
-  /**
-   * The Instagram glyph, lifted off the template onto a transparent ground.
-   *
-   * The talent can move the Instagram line, and the glyph belongs to that line
-   * — but the glyph is DRAWN INTO /meishi-template.png, so it cannot simply be
-   * repositioned. This file is the same pixels: the template's own 103 × 102
-   * ink box (IG_MARK), un-composited from the white it was drawn on, so laying
-   * it back over white reproduces the template's bytes exactly. A renderer
-   * that moves the line paints over the baked glyph and places this one
-   * instead; a renderer that has not been asked to move it leaves the
-   * template's own glyph alone and never loads this file.
-   */
-  igMark: "/meishi-instagram.png",
 } as const;
 
 /** Paper white — also what the bleed area is flooded with. */
@@ -139,7 +126,7 @@ export const PAPER_COLOR = "#FFFFFF";
  * The old .471 put it .68 mm lower, which is what showed.
  *
  * The slot's SIDES stay at the design's own .05 / .95. They are not what
- * settles the photo's lower corners — `PHOTO_CLIP` is: the ribbon's ends are
+ * settles the photo's lower corners — `photoClip` is: the ribbon's ends are
  * diagonal, so NO rectangle fits them (a wide slot pokes out past the tails, a
  * narrow one leaves white between the two), and the photo is cut along the
  * ribbon's own outline instead.
@@ -160,35 +147,88 @@ export const LAYOUT = {
 export type CardPoint = readonly [number, number];
 
 /**
- * The shape the photo is drawn inside: everything ABOVE the ribbon's own upper
- * outline.
+ * THE WINDOW THE PHOTO IS DRAWN IN — the design's own slot, with the ribbon's
+ * upper outline for its lower edge.
  *
- * The ribbon's two ends are diagonal, so there is no rectangle that fits them.
- * Widen the photo and its lower corners come out past the tails; narrow it and
- * white opens up between the photo's edge and the tail that flares out beyond
- * it. Both were tried. What actually fits the ribbon is the ribbon: the line
- * comes from the artwork itself (`RIBBON_TOP`, traced by
- * scripts/build-ribbon-profile.sh), carried a few rows PAST the outline so the
- * photo runs on underneath and the ribbon's own antialiased edge blends into
- * the photo rather than into the paper.
+ * Three of its sides are the slot itself (`LAYOUT.photo`). The fourth cannot
+ * be a straight line: the ribbon's two ends are diagonal, so no rectangle fits
+ * them — widen one and its lower corners come out past the tails, narrow it
+ * and white opens up between the photo's edge and the tail that flares out
+ * beyond it. Both were tried. What fits the ribbon is the ribbon, so the lower
+ * edge is the artwork's own outline (`RIBBON_TOP`, traced by
+ * scripts/build-ribbon-profile.sh), carried a few rows PAST it so the photo
+ * runs on underneath and the ribbon's own antialiased edge blends into the
+ * photo rather than into the paper.
+ *
+ * The shape is FIXED ON THE CARD. Moving the photo or making it bigger moves
+ * and grows the picture BEHIND this window, never the window itself: whatever
+ * the talent does, not one pixel of the photo is drawn outside this outline.
  *
  * ONE definition, used by both renderers — the preview turns it into a CSS
  * `polygon()`, the print file into a clipping path — so the two cannot cut the
  * picture to different shapes.
- *
- * It reaches well past the card on three sides so that a photo moved or grown
- * to the card's edges still meets the polygon's straight sides rather than its
- * corners.
  */
-const CLIP_OVERSHOOT = 0.25;
+export const PHOTO_WINDOW = {
+  left: LAYOUT.photo.left,
+  right: LAYOUT.photo.left + LAYOUT.photo.width,
+  top: LAYOUT.photo.top,
+} as const;
 
-export const PHOTO_CLIP: readonly CardPoint[] = [
-  [-CLIP_OVERSHOOT, -CLIP_OVERSHOOT],
-  [1 + CLIP_OVERSHOOT, -CLIP_OVERSHOOT],
-  [1 + CLIP_OVERSHOOT, RIBBON_TOP[RIBBON_TOP.length - 1][1]],
-  ...[...RIBBON_TOP].reverse(),
-  [-CLIP_OVERSHOOT, RIBBON_TOP[0][1]],
-];
+/** The outline's height at one point across the card, and at its own height
+ *  either side of it. Two points may share an `x` where the outline steps
+ *  straight up; the segment arriving there is the one that answers for it. */
+const ribbonTopAt = (x: number): number => {
+  const at = Math.min(Math.max(x, RIBBON_TOP[0][0]), RIBBON_TOP[RIBBON_TOP.length - 1][0]);
+  for (let i = 1; i < RIBBON_TOP.length; i++) {
+    const [ax, ay] = RIBBON_TOP[i - 1];
+    const [bx, by] = RIBBON_TOP[i];
+    if (bx > ax && at >= ax && at <= bx) return ay + ((by - ay) * (at - ax)) / (bx - ax);
+  }
+  return RIBBON_TOP[RIBBON_TOP.length - 1][1];
+};
+
+/**
+ * How far off the card a straight side is carried when it has nothing to cut.
+ * Big enough that it can never meet the picture: the picture is held inside
+ * the card, and the window's sides are well inside it.
+ */
+const CLIP_SLACK = 0.25;
+
+/**
+ * The window as a polygon, for a picture sitting at `picture`.
+ *
+ * A side the picture stops short of is carried off the card instead of being
+ * laid down where it is: a clip edge that lands exactly on the picture's own
+ * edge makes the renderer draw that edge twice, and the row of pixels along it
+ * comes out different. An untouched card has to come out of both renderers
+ * exactly as it always did, and untouched, the picture fills the window edge
+ * to edge on all three straight sides.
+ *
+ * A side is only carried off when it has nothing to do, so this cannot let any
+ * of the picture out: on that side the picture's own edge is already at or
+ * inside the window.
+ */
+export function photoClip(picture: {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}): CardPoint[] {
+  const left = picture.x < PHOTO_WINDOW.left ? PHOTO_WINDOW.left : PHOTO_WINDOW.left - CLIP_SLACK;
+  const right =
+    picture.x + picture.width > PHOTO_WINDOW.right
+      ? PHOTO_WINDOW.right
+      : PHOTO_WINDOW.right + CLIP_SLACK;
+  const top = picture.y < PHOTO_WINDOW.top ? PHOTO_WINDOW.top : PHOTO_WINDOW.top - CLIP_SLACK;
+
+  return [
+    [left, top],
+    [right, top],
+    [right, ribbonTopAt(right)],
+    ...[...RIBBON_TOP].reverse().filter(([x]) => x > left && x < right),
+    [left, ribbonTopAt(left)],
+  ];
+}
 
 /**
  * The ribbon's white band, in card-height fractions — measured off
@@ -206,46 +246,11 @@ export const PHOTO_CLIP: readonly CardPoint[] = [
  * px 56…991 of 1046 (row 850) and it narrows below that, while the photo slot
  * is px 52…994. Its ends are diagonal too, which is why the photo is cut along
  * the ribbon's own outline rather than at any straight line — see
- * `PHOTO_CLIP` above.
+ * `photoClip` above.
  */
 export const RIBBON_BAND = {
   top: 785 / TEMPLATE_PX.height,
   bottom: 936 / TEMPLATE_PX.height,
-} as const;
-
-/**
- * Where /meishi-template.png draws the Instagram glyph: its ink box, measured
- * off the file (px 69…171 × 1464…1565), with `left`/`width` as card-width
- * fractions and `top`/`height` as card-height fractions.
- *
- * The glyph travels with the Instagram line when the talent moves it, so both
- * renderers need to know the box twice over: to paint the baked glyph out, and
- * to place `ASSETS.igMark` at wherever the line has been put.
- */
-export const IG_MARK = {
-  left: 69 / TEMPLATE_PX.width,
-  top: 1464 / TEMPLATE_PX.height,
-  width: 103 / TEMPLATE_PX.width,
-  height: 102 / TEMPLATE_PX.height,
-} as const;
-
-/**
- * The box that paints the baked glyph out — the ink box with a few of the
- * template's own white pixels taken with it.
- *
- * Painted flush to the ink, the patch's edges land mid-pixel on both the
- * screen and the printed page, and the outermost column of the glyph survives
- * as a hairline down the card. The template is pure white for 40 px in every
- * direction here, so the patch can simply reach past the ink and be done with
- * it.
- */
-const COVER_BLEED_PX = 3;
-
-export const IG_MARK_COVER = {
-  left: (69 - COVER_BLEED_PX) / TEMPLATE_PX.width,
-  top: (1464 - COVER_BLEED_PX) / TEMPLATE_PX.height,
-  width: (103 + COVER_BLEED_PX * 2) / TEMPLATE_PX.width,
-  height: (102 + COVER_BLEED_PX * 2) / TEMPLATE_PX.height,
 } as const;
 
 /**
@@ -323,50 +328,34 @@ export type TypeWeight = (typeof TYPE)[keyof typeof TYPE]["weight"];
  * design sets it at. Shrinking a column therefore parks the breed first and
  * goes on taking the name down until it too bottoms out.
  *
- * `other` covers the runs that are not a pet's: the Instagram name and handle.
- * 1.5 mm is 6 Q — the Q system counts in quarter-millimetres and 6 Q is where
- * Japanese fine print bottoms out.
+ * Only a pet's own two runs carry a floor, because they are the only type on
+ * the card that can be resized: the owner line and the Instagram lines are set
+ * where and as the design sets them.
  *
  * A run the fitting rules have ALREADY pushed below its floor — a long breed
  * squeezed to clear its neighbour — is never pushed back UP to it: it simply
  * cannot be shrunk any further.
  */
-const MIN_TYPE_MM = { name: 3.0, breed: 1.8, other: 1.5 } as const;
+const MIN_TYPE_MM = { name: 3.0, breed: 1.8 } as const;
 
 export const MIN_TYPE_SIZE = {
   name: MIN_TYPE_MM.name / CARD_TRIM_MM.width,
   breed: MIN_TYPE_MM.breed / CARD_TRIM_MM.width,
-  other: MIN_TYPE_MM.other / CARD_TRIM_MM.width,
 } as const;
 
 /**
- * How close type — and the QR — may come to the trimmed card's left and right
+ * How close a pet's column may come to the trimmed card's left and right
  * edges, as a fraction of the card width.
  *
  * The card is cut out of a larger sheet and the cut wanders, so anything
  * pushed flush to the trim line risks being shaved. 2 mm is the margin the
- * design's own type already keeps: the Instagram glyph starts 3.6 mm in and
- * the QR ends 4.1 mm from the right, so nothing moves when this is applied to
- * a card nobody has touched. The photo is exempt — it is meant to run to the
- * card's edge.
+ * design's own type already keeps, so nothing moves when this is applied to a
+ * card nobody has touched. The photo is exempt — it is artwork, and it is
+ * meant to run to the card's edge.
  */
 const SAFE_MARGIN_MM = 2.0;
 
 export const SAFE_MARGIN = SAFE_MARGIN_MM / CARD_TRIM_MM.width;
-
-/**
- * The smallest a printed QR module may be, in millimetres.
- *
- * A QR is read off its module grid, so what has to stay big enough is one
- * module, not the code: a longer Instagram handle needs a denser QR, and the
- * same square then carries smaller modules. 0.30 mm is a little over four dots
- * at the PRINT_DPI the card is produced at, and comfortably above the 0.25 mm
- * offset printing can hold. On the 37-module QR a typical handle produces, it
- * stops the code at about 79 % of its designed size; see
- * docs/direct-edit-verification.md, where the smallest QR the form allows is
- * decoded off the rendered PDF.
- */
-export const MIN_QR_MODULE_MM = 0.3;
 
 /**
  * Fonts embedded in the print PDF, one file per weight `TYPE` asks for.

@@ -171,7 +171,6 @@ export default function Page() {
             transforms={data.transforms}
             composedPhoto={data.composedPhoto}
             qrSrc={data.qr?.png ?? null}
-            qrPitch={data.qr?.modulePitch ?? null}
             igHandle={data.ig_handle}
             igName={data.ig_name}
             ownerName={data.owner_name}

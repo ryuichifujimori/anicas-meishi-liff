@@ -18,10 +18,9 @@ import {
 } from "@/lib/card-adjust";
 import {
   ASSETS,
-  IG_MARK_COVER,
   LAYOUT,
   LINE_HEIGHT,
-  PHOTO_CLIP,
+  photoClip,
   TEMPLATE_ASPECT,
   cardText,
   cqw,
@@ -35,8 +34,6 @@ import { useMeasureRun } from "@/lib/card-metrics";
 type Props = {
   composedPhoto: string | null;
   qrSrc: string | null;
-  /** The QR's module pitch, which decides how far it may be shrunk. */
-  qrPitch: number | null;
   pets: Pet[];
   petCount: 1 | 2 | 3;
   igHandle: string;
@@ -65,7 +62,6 @@ type Props = {
 export function MeishiPreview({
   composedPhoto,
   qrSrc,
-  qrPitch,
   pets,
   petCount,
   igHandle,
@@ -76,13 +72,7 @@ export function MeishiPreview({
 }: Props) {
   const measure = useMeasureRun();
   const text = cardText({ pets, petCount, ownerName, igName, igHandle });
-  const card = resolveCard({
-    text,
-    measure,
-    adjust,
-    hasPhoto: Boolean(composedPhoto),
-    qrPitch,
-  });
+  const card = resolveCard({ text, measure, adjust, hasPhoto: Boolean(composedPhoto) });
 
   return (
     <div className="relative w-full max-w-[360px] mx-auto">
@@ -103,8 +93,9 @@ export function MeishiPreview({
             shape, so that holds wherever the talent puts it. Drawn ON TOP of
             the template background and intentionally extended into the ribbon
             band; the ribbon overlay below is then drawn over it. The picture is
-            cut along the ribbon's own outline (PHOTO_CLIP), so it meets the
-            ribbon exactly wherever it is moved or resized to. */}
+            cut to the design's own window (photoClip), whose lower edge is the
+            ribbon's outline — so however far it is moved or how big it is made,
+            none of it reaches the card outside that window. */}
         {composedPhoto && (
           <div className="absolute overflow-hidden" style={photoFrame(card.photo)}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -127,13 +118,6 @@ export function MeishiPreview({
           className="absolute inset-0 w-full h-full object-contain pointer-events-none"
         />
 
-        {/* The Instagram glyph belongs to the Instagram line, but the template
-            draws it — so once the line has been moved, the template's glyph is
-            covered over here and the same pixels are placed again below, at
-            wherever the line went. Untouched, neither of these exists and the
-            card is the card it always was. */}
-        {card.ig.mark && <div className="absolute bg-white" style={frame(COVER_BOX)} />}
-
         {/* The pet text block: the breed row, the name row and the owner line,
             stacked exactly as the design stacks them. Both rows keep their
             BOXES in that stack however the talent moves and resizes the pets
@@ -154,10 +138,9 @@ export function MeishiPreview({
           <OwnerLine run={card.owner} text={text.owner} measure={measure} />
         </div>
 
-        {card.ig.mark && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={ASSETS.igMark} alt="" className="absolute" style={frame(card.ig.mark)} />
-        )}
+        {/* The Instagram line, where the design flows it. The glyph beside it
+            is the template's own, drawn into /meishi-template.png: the line no
+            longer moves, so nothing has to be painted out and put back. */}
         {card.ig.runs.map((run, i) => (
           <Run key={i} run={run} />
         ))}
@@ -191,14 +174,6 @@ export function MeishiPreview({
     </div>
   );
 }
-
-/** What paints the template's own Instagram glyph out, as a card rectangle. */
-const COVER_BOX: CardRect = {
-  x: IG_MARK_COVER.left,
-  y: IG_MARK_COVER.top,
-  width: IG_MARK_COVER.width,
-  height: IG_MARK_COVER.height,
-};
 
 /**
  * One pet row — the breeds, or the names — inside the text block.
@@ -308,18 +283,19 @@ function OwnerLine({
 }
 
 /**
- * The photo's box as CSS, cut to `PHOTO_CLIP` — the shape that ends at the
- * ribbon's own outline. The shape is fixed on the CARD, so it is restated here
- * in the box's own coordinates: move or resize the photo and the picture slides
- * and grows behind a cut that stays exactly on the ribbon.
+ * The photo's box as CSS, cut to the design's own window — the ribbon's outline
+ * for its lower edge. The window is fixed on the CARD, so it is restated here
+ * in the box's own coordinates: move the photo or make it bigger and the
+ * picture slides and grows BEHIND a cut that does not budge. Nothing outside
+ * the window is ever drawn, at any size.
  */
 function photoFrame(rect: CardRect): CSSProperties {
   const at = (v: number, from: number, size: number) => `${((v - from) / size) * 100}%`;
   return {
     ...frame(rect),
-    clipPath: `polygon(${PHOTO_CLIP.map(
-      ([x, y]) => `${at(x, rect.x, rect.width)} ${at(y, rect.y, rect.height)}`,
-    ).join(", ")})`,
+    clipPath: `polygon(${photoClip(rect)
+      .map(([x, y]) => `${at(x, rect.x, rect.width)} ${at(y, rect.y, rect.height)}`)
+      .join(", ")})`,
   };
 }
 

@@ -7,10 +7,9 @@ import {
   ASSETS,
   BLEED_MM,
   CARD_TRIM_MM,
-  IG_MARK_COVER,
   PAGE_MM,
   PAPER_COLOR,
-  PHOTO_CLIP,
+  photoClip,
   PRINT_DPI,
   PRINT_FALLBACK_FONT,
   PRINT_FONTS,
@@ -142,7 +141,6 @@ export async function generateMeishiPrintPdf(
     measure: (spec, value) => measureRun(fonts[spec.weight], value),
     adjust: input.adjust,
     hasPhoto: Boolean(input.composedPhoto),
-    qrPitch: input.qr?.modulePitch ?? null,
   });
 
   const slot = place(card, placed.photo);
@@ -159,27 +157,20 @@ export async function generateMeishiPrintPdf(
       height: card.height,
     });
 
-  const drawImageAt = (art: PDFImage, rect: CardRect) => {
-    const at = place(card, rect);
-    page.drawImage(art, {
-      x: at.x,
-      y: pageH - at.top - at.height,
-      width: at.width,
-      height: at.height,
-    });
-  };
-
   placeCard(template);
 
   if (photo) {
-    // The picture is cut along the ribbon's own outline — the same PHOTO_CLIP
-    // the preview cuts it with — as a clipping path rather than by cropping
-    // the bitmap, so the pixels that do land are the pixels that always landed.
+    // The picture is cut to the design's own window — the same shape the
+    // preview cuts it with, the ribbon's outline for its lower edge — as a
+    // clipping path rather than by cropping the bitmap, so the pixels that do
+    // land are the pixels that always landed. The window does not travel with
+    // the picture: however far it is dragged or how big it is made, nothing
+    // reaches the page outside this shape.
     const corner = ([x, y]: readonly [number, number]) => ({
       x: card.x + x * card.width,
       y: pageH - card.top - y * card.height,
     });
-    const path = PHOTO_CLIP.map(corner);
+    const path = photoClip(placed.photo).map(corner);
     page.pushOperators(
       lib.pushGraphicsState(),
       lib.moveTo(path[0].x, path[0].y),
@@ -201,32 +192,11 @@ export async function generateMeishiPrintPdf(
   // edge — the reason the photo slot is allowed to run past the band's top.
   placeCard(ribbon);
 
-  // The Instagram glyph belongs to the Instagram line, but the template draws
-  // it. Once the line has been moved, the template's glyph is painted out with
-  // the paper it was drawn on and the same pixels are placed again at wherever
-  // the line went; untouched, neither happens and this file is never fetched.
-  if (placed.ig.mark) {
-    const cover = place(card, {
-      x: IG_MARK_COVER.left,
-      y: IG_MARK_COVER.top,
-      width: IG_MARK_COVER.width,
-      height: IG_MARK_COVER.height,
-    });
-    page.drawRectangle({
-      x: cover.x,
-      y: pageH - cover.top - cover.height,
-      width: cover.width,
-      height: cover.height,
-      color: ink(lib, PAPER_COLOR),
-    });
-  }
-
+  // The Instagram glyph beside the line is the template's own, drawn into
+  // /meishi-template.png. The line no longer moves, so there is nothing to
+  // paint out and nothing to place again.
   for (const run of [placed.breed, placed.name, placed.owner, ...placed.ig.runs]) {
     drawRun(page, { run, card, pageHeight: pageH, fonts, lib });
-  }
-
-  if (placed.ig.mark) {
-    drawImageAt(await embedArtwork(pdf, ASSETS.igMark), placed.ig.mark);
   }
 
   if (input.qr && logo) {

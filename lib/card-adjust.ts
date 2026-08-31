@@ -20,10 +20,8 @@
 
 import {
   CARD_TRIM_MM,
-  IG_MARK,
   LAYOUT,
   LINE_HEIGHT,
-  MIN_QR_MODULE_MM,
   MIN_TYPE_SIZE,
   RIBBON_BAND,
   SAFE_MARGIN,
@@ -45,13 +43,19 @@ import {
  * ------------------------------------------------------------------ */
 
 /**
- * The parts of the card that are always there, whatever the talent typed.
- * Alongside them stands ONE PART PER PET — see `petPart` — so a card carries
- * three grabbable parts plus as many pets as it names. Nothing else on the
- * card is touchable: the ribbon, the owner line and the design itself stay
- * where they were drawn.
+ * The parts of the card that are always there, whatever the talent typed —
+ * which is the photo, and only the photo. Alongside it stands ONE PART PER PET
+ * (see `petPart`), so a card carries one grabbable part plus as many pets as
+ * it names.
+ *
+ * The Instagram line and the QR used to be grabbable too, and are not any
+ * more. Both are set into the design at a place the design chose — the glyph
+ * the template itself draws, the QR in the corner clear of the trim — and
+ * moving them was never worth the two extra things to work out on a phone
+ * screen. They are drawn where `lib/meishi-layout.ts` puts them, at the size
+ * it sets, always.
  */
-export const FIXED_PARTS = ["photo", "ig", "qr"] as const;
+export const FIXED_PARTS = ["photo"] as const;
 
 export type FixedKey = (typeof FIXED_PARTS)[number];
 
@@ -101,8 +105,6 @@ export const NO_COLUMN: ColumnAdjust = { dx: 0 };
  */
 export type FaceAdjust = {
   photo: Adjust;
-  ig: Adjust;
-  qr: Adjust;
   pets: ColumnAdjust[];
   /**
    * How big the pets' type is set, as a multiple of the size the design's own
@@ -135,8 +137,6 @@ export type CardAdjust = { front: FaceAdjust };
 
 export const untouchedFace = (): FaceAdjust => ({
   photo: { ...NO_ADJUST },
-  ig: { ...NO_ADJUST },
-  qr: { ...NO_ADJUST },
   pets: [],
   text: 1,
 });
@@ -234,21 +234,22 @@ const resize = (r: CardRect, scale: number): CardRect => ({
 });
 
 /**
- * Where each of the fixed parts may go. The photo is the one that reaches the
- * card's edges — it is artwork, and it is meant to; what it may NOT do is drop
- * below the ribbon's white band, which is what hides its lower edge.
+ * Where the photo's PICTURE may go. It is the one thing on the card that
+ * reaches the edges — it is artwork, and it is meant to; what it may NOT do is
+ * drop below the ribbon's white band, which is what hides its lower edge.
+ *
+ * These are limits on the picture, not on what is drawn. Whatever the picture
+ * does inside them, only the part of it that falls inside the design's own
+ * window (`photoClip` in lib/meishi-layout.ts), which does not move, ever
+ * reaches the card.
  */
-const boundsFor = (key: FixedKey): Bounds =>
-  key === "photo" ? { ...CARD_BOUNDS, bottom: RIBBON_BAND.bottom } : SAFE_BOUNDS;
+const PHOTO_BOUNDS: Bounds = { ...CARD_BOUNDS, bottom: RIBBON_BAND.bottom };
 
 /**
  * How far each part may be SHRUNK, as a multiple of the size the design gives
  * it. There is no ceiling to state: how far a part can be grown is decided by
  * the card's own edges — and, for a pet's column, by its neighbours.
  */
-
-/** Nothing of its own to hold it up — only the card's edges. */
-const NO_FLOOR = 0;
 
 /**
  * The size a run of type stops shrinking at.
@@ -269,18 +270,6 @@ const typeFloor = (size: number, floor: number) =>
  *  floor. Growing is never held; only shrinking is. */
 const heldSize = (size: number, floor: number, scale: number) =>
   Math.max(heldAt(size, floor), size * scale);
-
-/**
- * How far the QR may be shrunk before a phone stops reading it: the point
- * where one module reaches MIN_QR_MODULE_MM. `pitch` is the module's size as a
- * fraction of the QR box, which `lib/qr.ts` reports for the QR it actually
- * built — so a denser QR (a longer handle) is allowed less shrink than a
- * sparse one, automatically.
- */
-const qrFloor = (pitch: number) => {
-  const moduleMm = LAYOUT.qr.width * CARD_TRIM_MM.width * pitch;
-  return moduleMm ? Math.min(1, MIN_QR_MODULE_MM / moduleMm) : 1;
-};
 
 /**
  * The photo has no legibility floor to hold it up, so it gets a plain one:
@@ -408,11 +397,18 @@ export type PlacedRun = {
 export type Part = { key: PartKey; rect: CardRect };
 
 export type ResolvedCard = {
+  /**
+   * The box the PICTURE fills, moved and grown by whatever the talent did.
+   * What reaches the card is this box cut to the design's own window, which
+   * does not move — see `parts`, which offers the window, not this box.
+   */
   photo: CardRect;
   breed: PlacedRun;
   name: PlacedRun;
   owner: PlacedRun;
-  ig: { runs: PlacedRun[]; mark: CardRect | null };
+  /** The Instagram line, exactly where the design flows it. Not movable. */
+  ig: { runs: PlacedRun[] };
+  /** The QR, exactly where the design puts it. Not movable. */
   qr: CardRect;
   /**
    * Everything the talent can pick up, TOPMOST FIRST — the order a touch has
@@ -442,10 +438,9 @@ export type ResolveInput = {
   text: CardText;
   measure: MeasureRun;
   adjust: FaceAdjust;
-  /** Whether a photo has been composed, and the QR's module pitch — both only
-   *  decide whether that part is grabbable and how far the QR may shrink. */
+  /** Whether a photo has been composed — the one thing that decides whether
+   *  there is anything on the card to pick up. */
   hasPhoto: boolean;
-  qrPitch: number | null;
 };
 
 /**
@@ -625,18 +620,6 @@ export function resolveCard(input: ResolveInput): ResolvedCard {
 
   const fixed: Record<FixedKey, { rect: CardRect; floor: number; usable: boolean }> = {
     photo: { rect: photoRect, floor: PHOTO_FLOOR, usable: input.hasPhoto },
-    ig: {
-      rect: union([markRect(), ...igRuns.map((run) => runRect(run, measure))]) ?? EMPTY_RECT,
-      // The Instagram block is one part, so it is held up by whichever of its
-      // two lines would hit the floor first.
-      floor: typeFloor(Math.min(TYPE.igName.size, TYPE.igHandle.size), MIN_TYPE_SIZE.other),
-      usable: igRuns.some((run) => run.lines.length > 0),
-    },
-    qr: {
-      rect: qrRect,
-      floor: input.qrPitch === null ? NO_FLOOR : qrFloor(input.qrPitch),
-      usable: input.qrPitch !== null,
-    },
   };
 
   /* ---- and where everything actually ends up ---- */
@@ -648,7 +631,7 @@ export function resolveCard(input: ResolveInput): ResolvedCard {
     }
     const part = fixed[key as FixedKey];
     if (!part.usable || !part.rect.width || !part.rect.height) return { ...NO_ADJUST };
-    return clampAdjust(part.rect, value, part.floor, boundsFor(key as FixedKey));
+    return clampAdjust(part.rect, value, part.floor, PHOTO_BOUNDS);
   };
 
   /** Where a part comes to sit at a given change — the box its frame is drawn
@@ -665,14 +648,14 @@ export function resolveCard(input: ResolveInput): ResolvedCard {
 
   const snap = (key: PartKey, value: Adjust): Snapped => {
     const held = clamp(key, value);
-    // The photo is the one part not held inside the safe margin — it is
-    // artwork, and it is meant to run to the card's edges — so it has nothing
-    // to line up with and is left where the finger put it.
-    const box = key === "photo" ? null : boxOf(key, held);
+    const pet = petIndex(key);
+    // The photo has nothing to line up with: its window is fixed on the card,
+    // and what a drag moves is the picture behind it.
+    if (pet === null) return { adjust: held, guide: null };
+    const box = boxOf(key, held);
     if (!box) return { adjust: held, guide: null };
 
-    const pet = petIndex(key);
-    const bounds = pet !== null ? columnBounds(pet) : boundsFor(key as FixedKey);
+    const bounds = columnBounds(pet);
     const room: SnapRoom = {
       middle: box.x + box.width / 2,
       left: bounds.left,
@@ -727,17 +710,16 @@ export function resolveCard(input: ResolveInput): ResolvedCard {
   const offer = (key: PartKey, rect: CardRect) => {
     if (rect.width > 0 && rect.height > 0) parts.push({ key, rect });
   };
-  // Topmost first, which is reverse paint order: the QR, the Instagram line,
-  // the pet columns (which never overlap each other), then the photo.
-  if (fixed.qr.usable) offer("qr", moved(qrRect, held.qr));
-  if (fixed.ig.usable) offer("ig", moved(fixed.ig.rect, held.ig));
-
+  // Topmost first, which is reverse paint order: the pet columns (which never
+  // overlap each other), then the photo.
   for (let pet = 0; pet < petCount; pet++) {
     offer(petPart(pet), slid(columnBox(pet, columns[pet].scale), columns[pet].dx));
   }
-  if (fixed.photo.usable) offer("photo", moved(photoRect, held.photo));
-
-  const igMove = move(fixed.ig.rect, held.ig);
+  // The photo is offered as its WINDOW, which never moves and never grows.
+  // Dragging it and pulling its corners move and grow the picture BEHIND the
+  // window, so the frame the talent has hold of is exactly the shape the
+  // picture will be cut to.
+  if (fixed.photo.usable) offer("photo", photoRect);
 
   return {
     photo: moved(photoRect, held.photo),
@@ -746,23 +728,13 @@ export function resolveCard(input: ResolveInput): ResolvedCard {
     name: row(TYPE.name, design.nameSize, MIN_TYPE_SIZE.name, nameTop, names,
               (pet) => text.pets[pet].name),
     owner,
-    ig: {
-      runs: igRuns.map((run) => igMove.run(run)),
-      // Until the Instagram line has been touched, the glyph the template
-      // already carries is left showing; from the first nudge onwards the
-      // renderers paint it out and place `ASSETS.igMark` here instead.
-      mark: isMoved(held.ig) ? igMove.rect(markRect()) : null,
-    },
-    qr: moved(qrRect, held.qr),
+    ig: { runs: igRuns },
+    qr: qrRect,
     parts,
     clamp,
     snap,
   };
 }
-
-/** Has this part been touched at all? Until it has, the design's own Instagram
- *  glyph is left alone — see `ASSETS.igMark`. */
-export const isMoved = (a: Adjust) => Boolean(a.dx || a.dy || a.scale !== 1);
 
 /* ------------------------------------------------------------------ *
  * Applying one part's change
@@ -777,39 +749,6 @@ const moved = (base: CardRect, adjust: Adjust): CardRect => {
   const scaled = resize(base, adjust.scale);
   return { ...scaled, x: scaled.x + adjust.dx, y: scaled.y + adjust.dy };
 };
-
-/**
- * One part's change as something that can be applied to any box or run
- * belonging to it: grow about the part's centre, then slide. Sizes and line
- * boxes ride along, so a scaled run's type comes up with it.
- */
-type Move = {
-  rect: (r: CardRect) => CardRect;
-  run: (r: PlacedRun) => PlacedRun;
-};
-
-function move(base: CardRect, adjust: Adjust): Move {
-  const cx = base.x + base.width / 2;
-  const cy = base.y + base.height / 2;
-  const s = adjust.scale;
-  const x = (v: number) => cx + (v - cx) * s + adjust.dx;
-  const y = (v: number) => cy + (v - cy) * s + adjust.dy;
-
-  return {
-    rect: (r) => ({ x: x(r.x), y: y(r.y), width: r.width * s, height: r.height * s }),
-    run: (r) => ({
-      ...r,
-      size: r.size * s,
-      lineBox: r.lineBox * s,
-      lines: r.lines.map((line) => ({
-        text: line.text,
-        x: x(line.x),
-        top: y(line.top),
-        size: line.size * s,
-      })),
-    }),
-  };
-}
 
 /* ------------------------------------------------------------------ *
  * Flowed runs and the boxes they occupy
@@ -854,41 +793,4 @@ function flowed(
     return { text: line, x, top: top + wToH(i * run.lineBox), size: spec.size };
   });
   return run;
-}
-
-/** The box a run's ink occupies: its ink left to right, its line boxes top to
- *  bottom. Null when the run put nothing down. */
-function runRect(run: PlacedRun, measure: MeasureRun): CardRect | null {
-  if (!run.lines.length) return null;
-  let left = Infinity;
-  let right = -Infinity;
-  for (const line of run.lines) {
-    const m = measure(run.spec, line.text);
-    left = Math.min(left, line.x + m.inkLeft * line.size);
-    right = Math.max(right, line.x + m.inkRight * line.size);
-  }
-  const top = run.lines[0].top;
-  const bottom = run.lines[run.lines.length - 1].top + wToH(run.lineBox);
-  return { x: left, y: top, width: right - left, height: bottom - top };
-}
-
-/** The Instagram glyph's box, as the design draws it. */
-const markRect = (): CardRect => ({
-  x: IG_MARK.left,
-  y: IG_MARK.top,
-  width: IG_MARK.width,
-  height: IG_MARK.height,
-});
-
-function union(rects: (CardRect | null)[]): CardRect | null {
-  const shown = rects.filter((r): r is CardRect => r !== null);
-  if (!shown.length) return null;
-  const x = Math.min(...shown.map((r) => r.x));
-  const y = Math.min(...shown.map((r) => r.y));
-  return {
-    x,
-    y,
-    width: Math.max(...shown.map((r) => r.x + r.width)) - x,
-    height: Math.max(...shown.map((r) => r.y + r.height)) - y,
-  };
 }
