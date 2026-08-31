@@ -1,22 +1,18 @@
 "use client";
 
-import {
-  useEffect,
-  useRef,
-  useState,
-  type CSSProperties,
-  type PointerEvent,
-} from "react";
+import { useRef, useState, type CSSProperties, type PointerEvent } from "react";
 import type { Pet } from "@/lib/types";
 import {
   type Adjust,
   type CardRect,
   type FaceAdjust,
+  type Guide,
   type MeasureRun,
   type PartKey,
   type PlacedPhoto,
   type PlacedRun,
   type ResolvedCard,
+  petIndex,
   readPart,
   resolveCard,
   writePart,
@@ -106,8 +102,9 @@ export function MeishiPreview({
             fills without clipping — and the slot only ever changes size, never
             shape, so that holds wherever the talent puts it. Drawn ON TOP of
             the template background and intentionally extended into the ribbon
-            band; the ribbon overlay below is then drawn over it, down to the
-            line the picture is cut off at. */}
+            band; the ribbon overlay below is then drawn over it. The picture
+            is cut to the window the design left for it, so moving and resizing
+            pan and zoom it inside that window. */}
         {composedPhoto && (
           <div className="absolute overflow-hidden" style={photoFrame(card.photo)}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -311,15 +308,17 @@ function OwnerLine({
 }
 
 /**
- * The photo's slot as CSS, cut off where the ribbon stops covering its lower
- * edge — see `PHOTO_TUCK`. A slot that does not reach that line is given no
- * cut at all, so a card whose photo nobody has moved carries exactly the
- * declarations it always did.
+ * The photo's box as CSS, cut to the window the design left for it. A box that
+ * is already inside the window is given no cut at all, so a card whose photo
+ * nobody has moved carries exactly the declarations it always did.
  */
 function photoFrame(photo: PlacedPhoto): CSSProperties {
   const style = frame(photo.box);
-  const cut = photo.box.height - photo.drawn.height;
-  if (cut > 0) style.clipPath = `inset(0 0 ${(cut / photo.box.height) * 100}% 0)`;
+  if (photo.drawn === photo.box) return style;
+  const { box, drawn } = photo;
+  const cut = (v: number) => `${(v / box.height) * 100}%`;
+  const side = (v: number) => `${(v / box.width) * 100}%`;
+  style.clipPath = `inset(${cut(drawn.y - box.y)} ${side(box.x + box.width - drawn.x - drawn.width)} ${cut(box.y + box.height - drawn.y - drawn.height)} ${side(drawn.x - box.x)})`;
   return style;
 }
 
@@ -352,14 +351,10 @@ const CORNERS = [
 const TOUCH_SLOP = 0.008;
 
 /**
- * How long the parts' frames show themselves when the preview first appears —
- * long enough to be seen, short enough not to be read as part of the card.
- *
- * It is the whole of the affordance: nothing is written on the screen, and
- * nothing is left behind, because the frames are gone from the page when it
- * has run.
+ * The green the editing marks are drawn in — the app's own, so the card is
+ * never marked up in a colour that could be mistaken for the design.
  */
-const HINT_MS = 1100;
+const MARK = "#2D6A4F";
 
 type Point = { x: number; y: number };
 
@@ -382,19 +377,11 @@ function Editor({
   onChange: (adjust: FaceAdjust) => void;
 }) {
   const [selected, setSelected] = useState<PartKey | null>(null);
-  /** Where the part being dragged has lined itself up, while it is being
-   *  dragged and no longer — see `lib/card-adjust.ts`'s table. */
-  const [guide, setGuide] = useState<number | null>(null);
-  /** The one-off flash that shows what can be picked up. It runs when the
-   *  preview appears, and the frames leave the page with it. */
-  const [hinting, setHinting] = useState(true);
+  /** How the part being dragged has lined itself up, while it is being dragged
+   *  and no longer — see `lib/card-adjust.ts`'s table. */
+  const [guide, setGuide] = useState<Guide | null>(null);
   const host = useRef<HTMLDivElement | null>(null);
   const drag = useRef<Drag | null>(null);
-
-  useEffect(() => {
-    const timer = setTimeout(() => setHinting(false), HINT_MS);
-    return () => clearTimeout(timer);
-  }, []);
 
   /** Pointer position in card fractions: x across the width, y down the height. */
   const at = (e: PointerEvent): Point | null => {
@@ -433,7 +420,6 @@ function Editor({
   const onDown = (e: PointerEvent<HTMLDivElement>) => {
     const point = at(e);
     if (!point) return;
-    setHinting(false);
     const key = hit(card, point, selected);
     setSelected(key);
     if (!key) return;
@@ -485,48 +471,91 @@ function Editor({
       onPointerUp={release}
       onPointerCancel={release}
     >
-      {/* What can be picked up, said once and then gone. */}
-      {hinting &&
-        card.parts.map((part) => (
+      {/* What can be picked up. A faint dotted frame round every movable part,
+          for as long as the card is being laid out — this screen is the one
+          that says what can be moved, and the confirmation screen (which has
+          no editor at all) is where the finished card is seen. */}
+      {card.parts
+        .filter((part) => part.key !== selected)
+        .map((part) => (
           <div
             key={part.key}
             aria-hidden
-            data-hint=""
-            className="absolute border-2 border-[#2D6A4F] pointer-events-none"
-            style={{ ...frame(part.rect), animation: `meishi-hint ${HINT_MS}ms ease-out both` }}
+            data-movable=""
+            className="absolute border border-dotted pointer-events-none"
+            style={{ ...frame(part.rect), borderColor: MARK, opacity: 0.45 }}
           />
         ))}
 
-      {/* Where the part being dragged has lined itself up. It exists only
-          while the finger is down: let go and it is gone. */}
-      {guide !== null && (
-        <div
-          aria-hidden
-          data-guide=""
-          className="absolute top-0 bottom-0 w-px -translate-x-1/2 bg-[#2D6A4F] pointer-events-none"
-          style={{ left: pct(guide) }}
-        />
-      )}
+      {/* How the part being dragged has lined itself up. It exists only while
+          the finger is down: let go and it is gone. */}
+      {guide && <GuideMark guide={guide} />}
 
       {selected && rect && (
         <div
-          className="absolute border-2 border-[#2D6A4F] pointer-events-none"
-          style={frame(rect)}
+          data-selected=""
+          className="absolute border-2 pointer-events-none"
+          style={{ ...frame(rect), borderColor: MARK }}
         >
-          {CORNERS.map((corner, i) => (
-            <span
-              key={i}
-              aria-hidden
-              onPointerDown={startScale(selected)}
-              className="absolute w-7 h-7 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center pointer-events-auto"
-              style={{ left: pct(corner.x), top: pct(corner.y) }}
-            >
-              <span className="w-3 h-3 rounded-full bg-white border-2 border-[#2D6A4F] shadow" />
-            </span>
-          ))}
+          {/* Only the parts that can be resized carry handles. A pet's column
+              is sized with the rest of the card's type, from the control under
+              the preview, so its frame says "drag me" and nothing else. */}
+          {petIndex(selected) === null &&
+            CORNERS.map((corner, i) => (
+              <span
+                key={i}
+                aria-hidden
+                onPointerDown={startScale(selected)}
+                className="absolute w-7 h-7 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center pointer-events-auto"
+                style={{ left: pct(corner.x), top: pct(corner.y) }}
+              >
+                <span
+                  className="w-3 h-3 rounded-full bg-white border-2 shadow"
+                  style={{ borderColor: MARK }}
+                />
+              </span>
+            ))}
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * The mark that says why a part stopped where it did.
+ *
+ * A line down the card means it is on the card's own middle; two short lines
+ * of the same length, one in each gap, mean the gaps either side have come out
+ * equal. They have to look different, or the two say nothing.
+ */
+function GuideMark({ guide }: { guide: Guide }) {
+  if (guide.kind === "middle") {
+    return (
+      <div
+        aria-hidden
+        data-guide="middle"
+        className="absolute top-0 bottom-0 w-px -translate-x-1/2 pointer-events-none"
+        style={{ left: pct(guide.x), backgroundColor: MARK }}
+      />
+    );
+  }
+  return (
+    <>
+      {guide.spans.map((span, i) => (
+        <div
+          key={i}
+          aria-hidden
+          data-guide="gap"
+          className="absolute h-px -translate-y-1/2 pointer-events-none"
+          style={{
+            left: pct(span.from),
+            width: pct(span.to - span.from),
+            top: pct(guide.y),
+            backgroundColor: MARK,
+          }}
+        />
+      ))}
+    </>
   );
 }
 

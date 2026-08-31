@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import type { Pet, PetPhoto, PhotoTransform } from "@/lib/types";
 import { loadAndNormalizeImage } from "@/lib/image";
-import { type FaceAdjust, untouchedFace } from "@/lib/card-adjust";
+import { type FaceAdjust, TEXT_RANGE, untouchedFace } from "@/lib/card-adjust";
 import { PhotoComposer } from "./PhotoComposer";
 import { MeishiPreview } from "./MeishiPreview";
 
@@ -150,6 +150,25 @@ export function Step4Photos({
             adjust={adjust}
             onAdjustChange={onAdjustChange}
           />
+          {/* The size of the pets' type, for the whole card at once. Set here
+              rather than by dragging a column's corner, because what a card of
+              three pets is judged on is the three names being the SAME size —
+              which two hands on two corners can only approximate. A column
+              that cannot fit at this size is the one that comes down. */}
+          <label htmlFor="text-size" className="block font-semibold text-sm">
+            文字の大きさ
+          </label>
+          <input
+            id="text-size"
+            type="range"
+            min={TEXT_RANGE.min}
+            max={TEXT_RANGE.max}
+            step={TEXT_RANGE.step}
+            value={adjust.text}
+            onChange={(e) => onAdjustChange({ ...adjust, text: Number(e.target.value) })}
+            className="w-full"
+          />
+
           <button
             type="button"
             onClick={() => onAdjustChange(untouchedFace())}

@@ -26,12 +26,3 @@ button {
 input, textarea, select {
   font-size: 16px; /* prevent iOS zoom */
 }
-
-/* The one-off flash that shows which parts of the card can be picked up.
-   Nothing is left behind: the frames are taken off the page when it has run
-   — see HINT_MS in app/components/MeishiPreview.tsx. */
-@keyframes meishi-hint {
-  from { opacity: 0; }
-  30% { opacity: 1; }
-  to { opacity: 0; }
-}

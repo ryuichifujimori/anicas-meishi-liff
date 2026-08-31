@@ -144,36 +144,22 @@ export const LAYOUT = {
  * /meishi-ribbon.png as the rows where the band runs unbroken from side to
  * side (px 785 … 935 of 1738).
  *
- * It is the floor the photo is kept above. The photo's lower edge is meant to
- * be HIDDEN by this band — that is why the slot is allowed to reach down to
- * .50, past the band's top — so a photo the talent has dragged or grown is
- * stopped where the band would stop covering it.
+ * It is the floor the photo's BOX is kept above. The photo's lower edge is
+ * meant to be hidden by this band — that is why the slot is allowed to reach
+ * down to .50, past the band's top.
+ *
+ * The overlay is ONE SOLID SILHOUETTE: measured off the file, every pixel of
+ * the ribbon — the caption box and both tails — is opaque white or black ink,
+ * with no partial alpha anywhere, so nothing behind it shows through. What it
+ * does NOT do is cover the card from side to side: its widest row spans
+ * px 56…991 of 1046 (row 850) and it narrows below that, while the photo slot
+ * is px 52…994. That is why the photo is drawn inside a window rather than
+ * simply stopped at a line — see `PlacedPhoto` in lib/card-adjust.ts.
  */
 export const RIBBON_BAND = {
   top: 785 / TEMPLATE_PX.height,
   bottom: 936 / TEMPLATE_PX.height,
 } as const;
-
-/**
- * Where the photo's lower edge is tucked under the ribbon — and as far down as
- * the photo is ever DRAWN, wherever the talent has put it.
- *
- * /meishi-ribbon.png was lifted off the template by turning the template's
- * white into transparency, so the ribbon's own white fill came away with it:
- * the two tails are outlines with nothing behind them. Anything of the photo
- * that reaches a tail shows straight through it, which is why a photo taken
- * further down than the design puts it starts showing its square bottom
- * corners.
- *
- * Measured off the file, the widest unbroken opaque run across the card is
- * px 56…990 of 1046 (row 850) and it narrows from there down — px 64…982 at
- * row 870, px 86…960 at row 922 — while the photo slot is px 52…994. So no
- * row of the band covers the slot from side to side, and the design's own
- * lower edge is already as far down as the photo can be taken. Both renderers
- * cut the picture off here; at the design's own placement the cut falls on the
- * edge that was there anyway and changes nothing.
- */
-export const PHOTO_TUCK = LAYOUT.photo.top + LAYOUT.photo.height;
 
 /**
  * Where /meishi-template.png draws the Instagram glyph: its ink box, measured

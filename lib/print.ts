@@ -171,13 +171,13 @@ export async function generateMeishiPrintPdf(
   placeCard(template);
 
   if (photo) {
-    // The picture is cut off where the ribbon stops covering its lower edge —
-    // see PHOTO_TUCK — by clipping rather than by cropping the bitmap, so the
-    // pixels that do land are the pixels that always landed. A slot that does
-    // not reach that line is drawn with no clipping path at all, and an
+    // The picture is cut to the window the design left for it — see
+    // PlacedPhoto — by clipping rather than by cropping the bitmap, so the
+    // pixels that do land are the pixels that always landed. A picture already
+    // inside the window is drawn with no clipping path at all, and an
     // untouched card's page is byte for byte the page it was.
     const shown = place(card, placed.photo.drawn);
-    const cut = shown.height < slot.height;
+    const cut = placed.photo.drawn !== placed.photo.box;
     if (cut) {
       page.pushOperators(
         lib.pushGraphicsState(),

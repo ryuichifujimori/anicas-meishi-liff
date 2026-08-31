@@ -25,7 +25,6 @@ import {
   LINE_HEIGHT,
   MIN_QR_MODULE_MM,
   MIN_TYPE_SIZE,
-  PHOTO_TUCK,
   RIBBON_BAND,
   SAFE_MARGIN,
   TYPE,
@@ -77,17 +76,21 @@ export type Adjust = { dx: number; dy: number; scale: number };
 export const NO_ADJUST: Adjust = { dx: 0, dy: 0, scale: 1 };
 
 /**
- * A pet's column carries no `dy` AT ALL.
+ * A pet's column carries NOTHING BUT a sideways slide.
  *
- * The breeds sit on one baseline and the names on another, and both are shared
- * by every pet on the card — that is what keeps three pets reading as one line
- * rather than three. Letting a column drift up or down would break it, so the
- * column simply has nowhere to store such a move: it slides sideways and
- * changes size, and nothing else.
+ * No `dy`: the breeds sit on one baseline and the names on another, and both
+ * are shared by every pet on the card — that is what keeps three pets reading
+ * as one line rather than three.
+ *
+ * No `scale` either. Sizing a column by dragging its corner made three pets
+ * almost impossible to set at the SAME size, which is what a card of three
+ * pets wants; the size now comes from one number for the whole card — see
+ * `FaceAdjust.text` — and a column that cannot fit at that size is the only
+ * one that shrinks.
  */
-export type ColumnAdjust = { dx: number; scale: number };
+export type ColumnAdjust = { dx: number };
 
-export const NO_COLUMN: ColumnAdjust = { dx: 0, scale: 1 };
+export const NO_COLUMN: ColumnAdjust = { dx: 0 };
 
 /**
  * One face of the card.
@@ -101,7 +104,25 @@ export type FaceAdjust = {
   ig: Adjust;
   qr: Adjust;
   pets: ColumnAdjust[];
+  /**
+   * How big the pets' type is set, as a multiple of the size the design's own
+   * fitting rules settled on. ONE number for the whole card: that is what
+   * makes three names come out the same size as each other, which is the
+   * thing a card of three pets is judged on.
+   *
+   * A column that cannot fit at this size is held down on its own — see
+   * `clampColumn` — so asking for more than the card has room for makes the
+   * crowded column smaller rather than making a mess.
+   */
+  text: number;
 };
+
+/**
+ * How far the one type size may be taken. The floor a run of type may not go
+ * below is `MIN_TYPE_SIZE`, and it is enforced per column whatever is asked
+ * for here; these are the ends of the control the talent actually turns.
+ */
+export const TEXT_RANGE = { min: 0.6, max: 1.4, step: 0.02 } as const;
 
 /**
  * The whole card, one entry per face.
@@ -117,6 +138,7 @@ export const untouchedFace = (): FaceAdjust => ({
   ig: { ...NO_ADJUST },
   qr: { ...NO_ADJUST },
   pets: [],
+  text: 1,
 });
 
 export const untouchedCard = (): CardAdjust => ({ front: untouchedFace() });
@@ -130,16 +152,18 @@ export function readPart(face: FaceAdjust, key: PartKey): Adjust {
   const pet = petIndex(key);
   if (pet === null) return face[key as FixedKey];
   const column = face.pets[pet] ?? NO_COLUMN;
-  return { dx: column.dx, dy: 0, scale: column.scale };
+  // A column's size is the card's one type size, not the column's own.
+  return { dx: column.dx, dy: 0, scale: face.text };
 }
 
-/** The same, going the other way. A column keeps only what it can hold. */
+/** The same, going the other way. A column keeps only what it can hold: where
+ *  it was slid to, and nothing else. */
 export function writePart(face: FaceAdjust, key: PartKey, value: Adjust): FaceAdjust {
   const pet = petIndex(key);
   if (pet === null) return { ...face, [key]: value };
   const pets = face.pets.slice();
   while (pets.length <= pet) pets.push({ ...NO_COLUMN });
-  pets[pet] = { dx: value.dx, scale: value.scale };
+  pets[pet] = { dx: value.dx };
   return { ...face, pets };
 }
 
@@ -267,25 +291,36 @@ const qrFloor = (pitch: number) => {
 const PHOTO_FLOOR = 0.5;
 
 /**
- * The photo as it is drawn: the whole slot, and the part of it that reaches
- * the card.
+ * The photo as it is drawn: the box the picture fills, and the part of it that
+ * reaches the card.
  *
- * The photo's lower edge is meant to be hidden by the ribbon, and `PHOTO_TUCK`
- * is as far down as the ribbon's band actually covers it — so the picture is
- * cut off there however far the slot has been taken. The slot itself is left
- * whole: that is what a finger moves and a handle resizes, and it is the box
- * the frame is drawn on.
+ * The picture is never drawn OUTSIDE THE WINDOW THE DESIGN CUT FOR IT. That
+ * window is `LAYOUT.photo`, and the ribbon is drawn to sit against its lower
+ * corners: /meishi-ribbon.png is one solid opaque silhouette (measured: its
+ * widest row spans px 56…991 of 1046 and it narrows below that), so there is
+ * no row where the ribbon covers the whole card. A picture taken past the
+ * window would therefore come out beside the ribbon's tails, where the design
+ * never puts anything — which is exactly what a talent sees when they make
+ * the photo bigger.
+ *
+ * So moving and resizing pan and zoom the picture INSIDE the window rather
+ * than moving the window. At the design's own placement the box and the
+ * window are the same rectangle, and nothing is cut at all.
  */
 export type PlacedPhoto = { box: CardRect; drawn: CardRect };
 
-/** The photo, cut off at the line the ribbon tucks it behind. A slot that does
- *  not reach the line is handed back untouched, so a card nobody has moved the
- *  photo on is drawn exactly as it always was. */
-const tucked = (box: CardRect): PlacedPhoto => {
-  const over = box.y + box.height - PHOTO_TUCK;
-  return over > 0
-    ? { box, drawn: { ...box, height: Math.max(0, box.height - over) } }
-    : { box, drawn: box };
+/** The part of the box that falls inside the window. A box already inside is
+ *  handed back as it is, so a card nobody has touched carries no cut. */
+const windowed = (box: CardRect, hole: CardRect): PlacedPhoto => {
+  const left = Math.max(box.x, hole.x);
+  const top = Math.max(box.y, hole.y);
+  const right = Math.min(box.x + box.width, hole.x + hole.width);
+  const bottom = Math.min(box.y + box.height, hole.y + hole.height);
+  const drawn =
+    left <= box.x && top <= box.y && right >= box.x + box.width && bottom >= box.y + box.height
+      ? box
+      : { x: left, y: top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
+  return { box, drawn };
 };
 
 /* ------------------------------------------------------------------ *
@@ -314,31 +349,60 @@ type SnapRoom = {
 };
 
 /**
+ * What the preview draws to say WHY a part stopped where it did.
+ *
+ * The mark has to say which of the table's rows took, or the talent cannot
+ * tell "this is on the card's middle" from "these two gaps are the same":
+ *
+ *   `middle` … one thin line down the card at `x`
+ *   `gaps`   … one short line along each gap, at height `y`. Two marks of the
+ *              same length, one either side of the part, ARE the statement.
+ */
+export type Guide =
+  | { kind: "middle"; x: number }
+  | { kind: "gaps"; y: number; spans: { from: number; to: number }[] };
+
+/**
  * THE TABLE: every place a part lines itself up to, in the order they are
  * tried. Each row says where the part's middle wants to sit, given the room
- * around it.
+ * around it, and what to draw once it is there.
  *
  * Another place to line up to is another row here and nothing else — the drag,
- * the line drawn on the preview and the value that gets stored all come from
- * this list, so none of them has to learn about it separately.
+ * the mark on the preview and the value that gets stored all come from this
+ * list, so none of them has to learn about it separately.
  */
 type SnapRule = {
   /** Where this row wants the part's middle, or null when it has nothing to
    *  say about the part in hand. */
   at: (room: SnapRoom) => number | null;
+  /** What to draw once the part has come to rest on it. */
+  mark: (room: SnapRoom, box: CardRect) => Guide;
 };
 
 const SNAP_TABLE: SnapRule[] = [
-  // The card's own middle.
-  { at: () => CARD_MIDDLE },
-  // Halfway between whatever stands on either side — with two or three pets,
-  // where the gaps to the neighbouring columns come out equal.
-  { at: (room) => (room.left + room.right) / 2 },
+  {
+    // The card's own middle.
+    at: () => CARD_MIDDLE,
+    mark: () => ({ kind: "middle", x: CARD_MIDDLE }),
+  },
+  {
+    // Halfway between whatever stands on either side — with two or three pets,
+    // where the gaps to the neighbouring columns come out equal.
+    at: (room) => (room.left + room.right) / 2,
+    mark: (room, box) => ({
+      kind: "gaps",
+      y: box.y + box.height / 2,
+      spans: [
+        { from: room.left, to: box.x },
+        { from: box.x + box.width, to: room.right },
+      ],
+    }),
+  },
 ];
 
-/** A part's change with the table applied, and the line to show for it — null
+/** A part's change with the table applied, and the mark to show for it — null
  *  when it did not land on anything. */
-export type Snapped = { adjust: Adjust; guide: number | null };
+export type Snapped = { adjust: Adjust; guide: Guide | null };
 
 /** Close enough to say a part came to rest exactly where it was aimed. */
 const SETTLED = 1e-9;
@@ -656,7 +720,7 @@ export function resolveCard(input: ResolveInput): ResolvedCard {
       // An edge or a neighbour may have stopped it short, and a part that did
       // not get there has not lined up with anything.
       if (!landed || Math.abs(landed.x + landed.width / 2 - target) > SETTLED) continue;
-      return { adjust: lined, guide: target };
+      return { adjust: lined, guide: rule.mark(room, landed) };
     }
     return { adjust: held, guide: null };
   };
@@ -709,7 +773,7 @@ export function resolveCard(input: ResolveInput): ResolvedCard {
   const igMove = move(fixed.ig.rect, held.ig);
 
   return {
-    photo: tucked(moved(photoRect, held.photo)),
+    photo: windowed(moved(photoRect, held.photo), photoRect),
     breed: row(TYPE.breed, design.breedSize, MIN_TYPE_SIZE.breed, breedTop, breeds,
                (pet) => text.pets[pet].breed),
     name: row(TYPE.name, design.nameSize, MIN_TYPE_SIZE.name, nameTop, names,
