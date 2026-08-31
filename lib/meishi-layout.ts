@@ -254,18 +254,21 @@ export type TypeSpec = (typeof TYPE)[keyof typeof TYPE];
 export type TypeWeight = (typeof TYPE)[keyof typeof TYPE]["weight"];
 
 /**
- * The smallest the card sets type, as a fraction of the card width — the size
- * of `TYPE.breed`, which is the smallest run the design itself uses. Across a
- * 55 mm card that is 1.82 mm, a hair over 5 pt: the floor printers give for
- * Japanese text, which is exactly why the design stops there.
+ * The smallest type may be set, in millimetres, and as a fraction of the card
+ * width — the floor a run the talent is shrinking is stopped at.
  *
- * It is arrived at the way every other size on the card is: stated once, as a
- * fraction of the card, and read off the design rather than invented. A row
- * the talent shrinks is stopped here. A row the fitting rules have ALREADY
- * pushed below it — a long breed squeezed to clear its neighbour — cannot be
- * shrunk any further; it can still be grown.
+ * 1.5 mm is 6 Q, the smallest size Japanese print is ordinarily set at: the Q
+ * system counts in quarter-millimetres and 6 Q is where captions and fine
+ * print bottom out. The card's own smallest run — `TYPE.breed`, at 1.82 mm —
+ * sits above it, which is what leaves a pet's column somewhere to shrink to.
+ *
+ * A run the fitting rules have ALREADY pushed below the floor — a long breed
+ * squeezed to clear its neighbour — cannot be shrunk any further; it can still
+ * be grown.
  */
-export const MIN_TYPE_SIZE = TYPE.breed.size;
+const MIN_TYPE_MM = 1.5;
+
+export const MIN_TYPE_SIZE = MIN_TYPE_MM / CARD_TRIM_MM.width;
 
 /**
  * The smallest a printed QR module may be, in millimetres.
@@ -387,7 +390,7 @@ export type Measured = { advance: number; inkLeft: number; inkRight: number };
 
 export const EMPTY_MEASURE: Measured = { advance: 0, inkLeft: 0, inkRight: 0 };
 
-const inkWidth = (m: Measured) => m.inkRight - m.inkLeft;
+export const inkWidth = (m: Measured) => m.inkRight - m.inkLeft;
 const inkMid = (m: Measured) => (m.inkLeft + m.inkRight) / 2;
 
 /** Where the type block sits and how wide it is, in card fractions. */

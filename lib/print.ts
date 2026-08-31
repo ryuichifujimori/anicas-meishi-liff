@@ -597,12 +597,17 @@ function measureRun(font: FontSet, text: string): Measured {
 /**
  * Puts one run of type down.
  *
- * `lib/card-adjust.ts` has already decided every line's string, its left edge
- * and the top of its line box, so there is no flowing, centring or breaking
- * left to do here — only the one thing a PDF needs that CSS does for free:
- * finding the baseline inside the line box. CSS centres the font's content
- * area (ascent + descent) in that box and hangs the glyphs off its top, and
- * that is what this reproduces.
+ * `lib/card-adjust.ts` has already decided every line's string, its left edge,
+ * the top of its line box and the size it is set at, so there is no flowing,
+ * centring or breaking left to do here — only the one thing a PDF needs that
+ * CSS does for free: finding the baseline inside the line box. CSS centres the
+ * font's content area (ascent + descent) in that box and hangs the glyphs off
+ * its top, and that is what this reproduces.
+ *
+ * The baseline comes from the RUN's own size, not from each line's, so a pet
+ * whose column the talent set larger or smaller still sits on the very same
+ * baseline as the pets beside it — which is what the preview's line box does
+ * on screen.
  */
 function drawRun(
   page: PDFPage,
@@ -621,10 +626,10 @@ function drawRun(
   const colour = ink(opts.lib, run.spec.color);
   // Sizes and line boxes are fractions of the card WIDTH, positions down the
   // card are fractions of its HEIGHT — as everywhere else on the card.
-  const size = run.size * card.width;
+  const struck = run.size * card.width;
   const lineBox = run.lineBox * card.width;
-  const halfLeading = (lineBox - font.primary.pdf.heightAtSize(size)) / 2;
-  const baseline = halfLeading + font.primary.pdf.heightAtSize(size, { descender: false });
+  const halfLeading = (lineBox - font.primary.pdf.heightAtSize(struck)) / 2;
+  const baseline = halfLeading + font.primary.pdf.heightAtSize(struck, { descender: false });
 
   for (const line of run.lines) {
     draw(
@@ -633,7 +638,7 @@ function drawRun(
       line.text,
       card.x + line.x * card.width,
       opts.pageHeight - (card.top + line.top * card.height + baseline),
-      size,
+      line.size * card.width,
       colour,
     );
   }

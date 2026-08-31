@@ -3,16 +3,16 @@
 import { useRef, useState, type CSSProperties, type PointerEvent } from "react";
 import type { Pet } from "@/lib/types";
 import {
-  ADJUSTABLE,
   type Adjust,
-  type AdjustKey,
   type CardRect,
   type FaceAdjust,
   type MeasureRun,
-  type PlacedRow,
+  type PartKey,
   type PlacedRun,
   type ResolvedCard,
+  readPart,
   resolveCard,
+  writePart,
 } from "@/lib/card-adjust";
 import {
   ASSETS,
@@ -39,7 +39,7 @@ type Props = {
   igHandle: string;
   igName: string;
   ownerName: string;
-  /** Where the talent has put the five movable parts. */
+  /** Where the talent has put the card's movable parts. */
   adjust: FaceAdjust;
   /**
    * Supply this to let them move and resize those parts on the preview.
@@ -130,9 +130,10 @@ export function MeishiPreview({
         {card.ig.mark && <div className="absolute bg-white" style={frame(COVER_BOX)} />}
 
         {/* The pet text block: the breed row, the name row and the owner line,
-            stacked exactly as the design stacks them. The two rows keep their
-            BOXES in that stack however far the talent moves the words inside
-            them, so the owner — which is not hers to move — cannot be pushed
+            stacked exactly as the design stacks them. Both rows keep their
+            BOXES in that stack however the talent moves and resizes the pets
+            inside them — so every breed shares one baseline, every name shares
+            another, and the owner, which is not hers to move, cannot be pushed
             about by anything done above it. */}
         <div
           className="absolute text-center"
@@ -143,8 +144,8 @@ export function MeishiPreview({
             lineHeight: LINE_HEIGHT,
           }}
         >
-          <PetRow row={card.breed} />
-          <PetRow row={card.name} />
+          <PetRow run={card.breed} />
+          <PetRow run={card.name} />
           <OwnerLine run={card.owner} text={text.owner} measure={measure} />
         </div>
 
@@ -198,40 +199,45 @@ const COVER_BOX: CardRect = {
  * One pet row — the breeds, or the names — inside the text block.
  *
  * The row's box stays where the design's flow puts it and keeps the design's
- * height; the words inside it are placed by `lib/card-adjust.ts`, offset from
- * that box by however far the talent has taken them.
+ * height. Inside it every pet is placed by `lib/card-adjust.ts`, and each may
+ * be set at its own size: the OUTER span is struck at the row's own size and
+ * holds the line box, so its baseline is the row's baseline, and the inner
+ * span — which takes no height of its own — hangs the pet's words on that same
+ * baseline whatever size they are set at. That is what keeps three names level
+ * with each other while each is sized on its own.
  */
-function PetRow({ row }: { row: PlacedRow }) {
-  if (!row.lines.length) return null;
+function PetRow({ run }: { run: PlacedRun }) {
+  if (!run.lines.length) return null;
 
   const style: CSSProperties = {
     position: "relative",
-    height: cqw(LINE_HEIGHT * row.spec.size),
+    height: cqw(LINE_HEIGHT * run.spec.size),
   };
-  if (row.spec.marginTop) style.marginTop = cqw(row.spec.marginTop);
+  if (run.spec.marginTop) style.marginTop = cqw(run.spec.marginTop);
 
   return (
     <div style={style}>
-      {row.lines.map((line, i) => {
-        const shift = hToW(line.top - row.designTop);
-        return (
-          <span
-            key={i}
-            style={{
-              position: "absolute",
-              top: shift ? cqw(shift) : 0,
-              left: cqw(line.x - LAYOUT.textBlock.left),
-              fontSize: cqw(row.size),
-              lineHeight: cqw(row.lineBox),
-              fontWeight: row.spec.weight,
-              color: row.spec.color,
-              whiteSpace: "nowrap",
-            }}
-          >
-            {line.text}
-          </span>
-        );
-      })}
+      {run.lines.map((line, i) => (
+        <span
+          key={i}
+          style={{
+            position: "absolute",
+            top: 0,
+            left: cqw(line.x - LAYOUT.textBlock.left),
+            fontSize: cqw(run.size),
+            lineHeight: cqw(run.lineBox),
+            fontWeight: run.spec.weight,
+            color: run.spec.color,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {line.size === run.size ? (
+            line.text
+          ) : (
+            <span style={{ fontSize: cqw(line.size), lineHeight: 0 }}>{line.text}</span>
+          )}
+        </span>
+      ))}
     </div>
   );
 }
@@ -249,7 +255,7 @@ function Run({ run }: { run: PlacedRun }) {
           style={{
             left: cqw(line.x),
             top: pct(line.top),
-            fontSize: cqw(run.size),
+            fontSize: cqw(line.size),
             lineHeight: cqw(run.lineBox),
             fontWeight: run.spec.weight,
             color: run.spec.color,
@@ -327,8 +333,8 @@ const TOUCH_SLOP = 0.008;
 type Point = { x: number; y: number };
 
 type Drag =
-  | { kind: "move"; key: AdjustKey; from: Adjust; start: Point }
-  | { kind: "scale"; key: AdjustKey; from: Adjust; reach: number };
+  | { kind: "move"; key: PartKey; from: Adjust; start: Point }
+  | { kind: "scale"; key: PartKey; from: Adjust; reach: number };
 
 /**
  * The one thing the talent has to keep in their head is which part they are
@@ -344,7 +350,7 @@ function Editor({
   adjust: FaceAdjust;
   onChange: (adjust: FaceAdjust) => void;
 }) {
-  const [selected, setSelected] = useState<AdjustKey | null>(null);
+  const [selected, setSelected] = useState<PartKey | null>(null);
   const host = useRef<HTMLDivElement | null>(null);
   const drag = useRef<Drag | null>(null);
 
@@ -358,20 +364,28 @@ function Editor({
     };
   };
 
+  const rectOf = (key: PartKey) => card.parts.find((part) => part.key === key)?.rect ?? null;
+
   // Held to what the card allows before it is stored, not after — so a finger
   // that runs past an edge does not build up travel it has to give back before
   // the part moves again, and the value that reaches the payload is one the
-  // card can actually be printed from.
-  const set = (key: AdjustKey, value: Adjust) =>
-    onChange({ ...adjust, [key]: card.clamp[key](value) });
+  // card can actually be printed from. A pet's column drops its `dy` on the way
+  // in, which is what stops one pet drifting off its row's baseline.
+  const set = (key: PartKey, value: Adjust) =>
+    onChange(writePart(adjust, key, card.clamp(key, value)));
 
-  const startScale = (key: AdjustKey) => (e: PointerEvent<HTMLElement>) => {
+  const startScale = (key: PartKey) => (e: PointerEvent<HTMLElement>) => {
     const point = at(e);
-    const rect = card.frames[key];
+    const rect = rectOf(key);
     if (!point || !rect) return;
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
-    drag.current = { kind: "scale", key, from: adjust[key], reach: reach(rect, point) };
+    drag.current = {
+      kind: "scale",
+      key,
+      from: readPart(adjust, key),
+      reach: reach(rect, point),
+    };
   };
 
   const onDown = (e: PointerEvent<HTMLDivElement>) => {
@@ -381,7 +395,7 @@ function Editor({
     setSelected(key);
     if (!key) return;
     e.currentTarget.setPointerCapture(e.pointerId);
-    drag.current = { kind: "move", key, from: adjust[key], start: point };
+    drag.current = { kind: "move", key, from: readPart(adjust, key), start: point };
   };
 
   const onMove = (e: PointerEvent<HTMLDivElement>) => {
@@ -399,7 +413,7 @@ function Editor({
     // The part scales about its own centre, which a scale drag never moves, so
     // the live frame is as good a centre to measure from as the one the finger
     // went down on.
-    const rect = card.frames[d.key];
+    const rect = rectOf(d.key);
     if (!rect || !d.reach) return;
     set(d.key, { ...d.from, scale: (d.from.scale * reach(rect, point)) / d.reach });
   };
@@ -408,7 +422,7 @@ function Editor({
     drag.current = null;
   };
 
-  const rect = selected ? card.frames[selected] : null;
+  const rect = selected ? rectOf(selected) : null;
 
   return (
     <div
@@ -454,26 +468,24 @@ function reach(rect: CardRect, point: Point): number {
 }
 
 /**
- * Which part a touch landed on: the topmost one whose box holds it, tested in
- * reverse paint order. The part already being held wins a tie, so a finger
- * coming back to it never jumps to a neighbour.
+ * Which part a touch landed on: the topmost one whose box holds it. The parts
+ * arrive from `lib/card-adjust.ts` already in that order, and the part already
+ * being held wins a tie, so a finger coming back to it never jumps to a
+ * neighbour.
  */
 function hit(
   card: ResolvedCard,
   point: Point,
-  selected: AdjustKey | null,
-): AdjustKey | null {
+  selected: PartKey | null,
+): PartKey | null {
   const padY = wToH(TOUCH_SLOP);
-  const inside = (key: AdjustKey) => {
-    const rect = card.frames[key];
-    return (
-      !!rect &&
-      point.x >= rect.x - TOUCH_SLOP &&
-      point.x <= rect.x + rect.width + TOUCH_SLOP &&
-      point.y >= rect.y - padY &&
-      point.y <= rect.y + rect.height + padY
-    );
-  };
-  if (selected && inside(selected)) return selected;
-  return [...ADJUSTABLE].reverse().find(inside) ?? null;
+  const inside = ({ rect }: { rect: CardRect }) =>
+    point.x >= rect.x - TOUCH_SLOP &&
+    point.x <= rect.x + rect.width + TOUCH_SLOP &&
+    point.y >= rect.y - padY &&
+    point.y <= rect.y + rect.height + padY;
+
+  const held = card.parts.find((part) => part.key === selected);
+  if (held && inside(held)) return held.key;
+  return card.parts.find(inside)?.key ?? null;
 }
