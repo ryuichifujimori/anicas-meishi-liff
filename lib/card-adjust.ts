@@ -26,6 +26,7 @@ import {
   MIN_QR_MODULE_MM,
   MIN_TYPE_SIZE,
   RIBBON_BAND,
+  SAFE_MARGIN,
   TYPE,
   type CardText,
   type Measured,
@@ -163,6 +164,13 @@ type Bounds = { left: number; right: number; top: number; bottom: number };
 const CARD_BOUNDS: Bounds = { left: 0, right: 1, top: 0, bottom: 1 };
 
 /**
+ * What the card allows anything but the photo: the trimmed card, kept clear of
+ * its own left and right edges by `SAFE_MARGIN`, so a wandering cut cannot
+ * shave the type or the QR.
+ */
+const SAFE_BOUNDS: Bounds = { ...CARD_BOUNDS, left: SAFE_MARGIN, right: 1 - SAFE_MARGIN };
+
+/**
  * Brings one part's change inside what the card allows: the box may not leave
  * its bounds, and the scale is held between `floor` and the largest size that
  * still fits inside those bounds. Clamping happens HERE rather than in the
@@ -201,12 +209,12 @@ const resize = (r: CardRect, scale: number): CardRect => ({
 });
 
 /**
- * The card's own edges, except for the photo: its lower edge is meant to be
- * hidden by the ribbon's white band, so it is stopped at the band's bottom
- * rather than at the bottom of the card.
+ * Where each of the fixed parts may go. The photo is the one that reaches the
+ * card's edges — it is artwork, and it is meant to; what it may NOT do is drop
+ * below the ribbon's white band, which is what hides its lower edge.
  */
 const boundsFor = (key: FixedKey): Bounds =>
-  key === "photo" ? { ...CARD_BOUNDS, bottom: RIBBON_BAND.bottom } : CARD_BOUNDS;
+  key === "photo" ? { ...CARD_BOUNDS, bottom: RIBBON_BAND.bottom } : SAFE_BOUNDS;
 
 /**
  * How far each part may be SHRUNK, as a multiple of the size the design gives
@@ -218,14 +226,24 @@ const boundsFor = (key: FixedKey): Bounds =>
 const NO_FLOOR = 0;
 
 /**
- * How far a run of type may be shrunk before it stops being printable.
+ * The size a run of type stops shrinking at.
  *
  * `size` is what the fitting rules in `lib/meishi-layout.ts` have already
- * settled on for this card's words. A run that is still above the floor may
- * come down to it; one the fitting rules have already pushed below it may not
- * be shrunk at all.
+ * settled on for this card's words, and `floor` is what its kind may not go
+ * below. A run the fitting rules have ALREADY taken under the floor is left
+ * where it is rather than pushed back up to it — it just has nowhere left to
+ * shrink to.
  */
-const typeFloor = (size: number) => Math.min(1, size ? MIN_TYPE_SIZE / size : 1);
+const heldAt = (size: number, floor: number) => Math.min(size, floor);
+
+/** How far a run may be shrunk, as a multiple of the size it is set at. */
+const typeFloor = (size: number, floor: number) =>
+  size ? Math.min(1, heldAt(size, floor) / size) : 1;
+
+/** The size a run ends up at once the talent's scale has been held to its
+ *  floor. Growing is never held; only shrinking is. */
+const heldSize = (size: number, floor: number, scale: number) =>
+  Math.max(heldAt(size, floor), size * scale);
 
 /**
  * How far the QR may be shrunk before a phone stops reading it: the point
@@ -361,34 +379,84 @@ export function resolveCard(input: ResolveInput): ResolvedCard {
   // ink, so the axis IS the middle of the column: sliding it moves both lines
   // together, and scaling about it grows them in place.
   const rows = [
-    { spec: TYPE.breed, size: design.breedSize, top: breedTop, measures: breeds },
-    { spec: TYPE.name, size: design.nameSize, top: nameTop, measures: names },
+    {
+      spec: TYPE.breed,
+      size: design.breedSize,
+      floor: MIN_TYPE_SIZE.breed,
+      top: breedTop,
+      measures: breeds,
+    },
+    {
+      spec: TYPE.name,
+      size: design.nameSize,
+      floor: MIN_TYPE_SIZE.name,
+      top: nameTop,
+      measures: names,
+    },
   ];
 
+  /** The rows a given pet actually has words on. */
+  const rowsOf = (pet: number) =>
+    rows.filter((row) => inkWidth(row.measures[pet] ?? EMPTY_MEASURE) > 0);
+
   /**
-   * The box a pet's column occupies as the design draws it: the wider of its
-   * two lines' ink, centred on the column's axis, from the top of the breed's
-   * line box to the foot of the name's.
+   * The box a pet's column occupies at a given scale: the wider of its two
+   * lines' ink, centred on the column's axis, over the two rows' line boxes.
+   *
+   * Each row is taken at the size it will really be SET at, which is not
+   * simply the design size times the scale: a row that has reached its own
+   * floor stops there while the other goes on shrinking. So the box has to be
+   * built from the sizes rather than scaled as a whole.
    */
-  const columnBox = (pet: number): CardRect => {
+  const columnBox = (pet: number, scale = 1): CardRect => {
     let half = 0;
     let top = Infinity;
     let bottom = -Infinity;
-    for (const row of rows) {
-      const ink = inkWidth(row.measures[pet] ?? EMPTY_MEASURE);
-      if (!ink) continue;
-      half = Math.max(half, (ink * row.size) / 2);
-      top = Math.min(top, row.top);
-      bottom = Math.max(bottom, row.top + wToH(LINE_HEIGHT * row.spec.size));
+    for (const row of rowsOf(pet)) {
+      const size = heldSize(row.size, row.floor, scale);
+      half = Math.max(half, (inkWidth(row.measures[pet]) * size) / 2);
+      // The line box follows the size the row ended up at, about its middle.
+      const box = wToH(LINE_HEIGHT * row.spec.size);
+      const grown = (box * size) / row.size;
+      const middle = row.top + box / 2;
+      top = Math.min(top, middle - grown / 2);
+      bottom = Math.max(bottom, middle + grown / 2);
     }
     if (!Number.isFinite(top)) return EMPTY_RECT;
     return { x: design.axes[pet] - half, y: top, width: half * 2, height: bottom - top };
   };
 
-  // One floor for the column, set by whichever of its two lines would reach the
-  // printable minimum first.
-  const columnFloor = typeFloor(Math.min(design.breedSize, design.nameSize));
+  /**
+   * How far a column may be shrunk: until its LAST row reaches its own floor.
+   * The breed parks first and the name goes on down, so it is the name that
+   * decides — and on a pet with only one of the two, that one does.
+   */
+  const columnFloor = (pet: number) =>
+    Math.min(1, ...rowsOf(pet).map((row) => typeFloor(row.size, row.floor)));
+
   const petCount = text.pets.length;
+
+  /**
+   * Holds one column's change to what the card allows, between `bounds`.
+   *
+   * It cannot go through `clampAdjust`, which grows a box evenly: a column's
+   * width follows the sizes its two rows ended up at. Growing is even, though
+   * — a row only stops at its floor on the way DOWN — so the largest scale
+   * that still fits is the plain ratio of the room to the design's own box.
+   */
+  const clampColumn = (pet: number, value: Adjust, bounds: Bounds): Adjust => {
+    const base = columnBox(pet);
+    if (!base.width) return { ...NO_ADJUST };
+    const middle = base.y + base.height / 2;
+    const fit = Math.min(
+      (bounds.right - bounds.left) / base.width,
+      (Math.min(middle - bounds.top, bounds.bottom - middle) * 2) / base.height,
+    );
+    const scale = Math.min(Math.max(value.scale, columnFloor(pet)), fit);
+    const box = columnBox(pet, scale);
+    const x = slack(box.x, box.width, bounds.left, bounds.right);
+    return { scale, dx: Math.min(Math.max(value.dx, x.min), x.max), dy: 0 };
+  };
 
   // Two passes. The first holds every column inside the card alone; the second
   // holds it clear of where its neighbours came to rest in the first. Because a
@@ -396,15 +464,14 @@ export function resolveCard(input: ResolveInput): ResolvedCard {
   // use — the second pass only has work to do when a stored payload arrives
   // with columns already overlapping.
   const cardOnly = Array.from({ length: petCount }, (_, pet) => {
-    const box = columnBox(pet);
-    if (!box.width) return box;
-    return moved(box, clampAdjust(box, readPart(adjust, petPart(pet)), columnFloor, CARD_BOUNDS));
+    const held = clampColumn(pet, readPart(adjust, petPart(pet)), SAFE_BOUNDS);
+    return slid(columnBox(pet, held.scale), held.dx);
   });
 
   const columnBounds = (pet: number): Bounds => ({
-    ...CARD_BOUNDS,
-    left: pet > 0 ? cardOnly[pet - 1].x + cardOnly[pet - 1].width : 0,
-    right: pet < petCount - 1 ? cardOnly[pet + 1].x : 1,
+    ...SAFE_BOUNDS,
+    left: pet > 0 ? cardOnly[pet - 1].x + cardOnly[pet - 1].width : SAFE_BOUNDS.left,
+    right: pet < petCount - 1 ? cardOnly[pet + 1].x : SAFE_BOUNDS.right,
   });
 
   /* ---- the boxes the design leaves for everything else ---- */
@@ -446,7 +513,7 @@ export function resolveCard(input: ResolveInput): ResolvedCard {
       rect: union([markRect(), ...igRuns.map((run) => runRect(run, measure))]) ?? EMPTY_RECT,
       // The Instagram block is one part, so it is held up by whichever of its
       // two lines would hit the floor first.
-      floor: typeFloor(Math.min(TYPE.igName.size, TYPE.igHandle.size)),
+      floor: typeFloor(Math.min(TYPE.igName.size, TYPE.igHandle.size), MIN_TYPE_SIZE.other),
       usable: igRuns.some((run) => run.lines.length > 0),
     },
     qr: {
@@ -461,9 +528,7 @@ export function resolveCard(input: ResolveInput): ResolvedCard {
   const clamp = (key: PartKey, value: Adjust): Adjust => {
     const pet = petIndex(key);
     if (pet !== null) {
-      const box = columnBox(pet);
-      if (!box.width) return { ...NO_ADJUST };
-      return clampAdjust(box, value, columnFloor, columnBounds(pet));
+      return clampColumn(pet, value, columnBounds(pet));
     }
     const part = fixed[key as FixedKey];
     if (!part.usable || !part.rect.width || !part.rect.height) return { ...NO_ADJUST };
@@ -477,18 +542,27 @@ export function resolveCard(input: ResolveInput): ResolvedCard {
     clamp(petPart(pet), readPart(adjust, petPart(pet))),
   );
 
-  const row = (spec: TypeSpec, size: number, top: number, measures: Measured[],
-               word: (pet: number) => string): PlacedRun => ({
+  const row = (
+    spec: TypeSpec,
+    size: number,
+    floor: number,
+    top: number,
+    measures: Measured[],
+    word: (pet: number) => string,
+  ): PlacedRun => ({
     spec,
     size,
     lineBox: LINE_HEIGHT * spec.size,
     lines: text.pets
-      .map((_, pet) => ({
-        text: word(pet),
-        x: inkCentred(measures[pet], design.axes[pet] + columns[pet].dx, size * columns[pet].scale),
-        top,
-        size: size * columns[pet].scale,
-      }))
+      .map((_, pet) => {
+        const set = heldSize(size, floor, columns[pet].scale);
+        return {
+          text: word(pet),
+          x: inkCentred(measures[pet], design.axes[pet] + columns[pet].dx, set),
+          top,
+          size: set,
+        };
+      })
       .filter((line) => line.text),
   });
 
@@ -502,7 +576,7 @@ export function resolveCard(input: ResolveInput): ResolvedCard {
   if (fixed.ig.usable) offer("ig", moved(fixed.ig.rect, held.ig));
 
   for (let pet = 0; pet < petCount; pet++) {
-    offer(petPart(pet), moved(columnBox(pet), columns[pet]));
+    offer(petPart(pet), slid(columnBox(pet, columns[pet].scale), columns[pet].dx));
   }
   if (fixed.photo.usable) offer("photo", moved(photoRect, held.photo));
 
@@ -510,8 +584,10 @@ export function resolveCard(input: ResolveInput): ResolvedCard {
 
   return {
     photo: moved(photoRect, held.photo),
-    breed: row(TYPE.breed, design.breedSize, breedTop, breeds, (pet) => text.pets[pet].breed),
-    name: row(TYPE.name, design.nameSize, nameTop, names, (pet) => text.pets[pet].name),
+    breed: row(TYPE.breed, design.breedSize, MIN_TYPE_SIZE.breed, breedTop, breeds,
+               (pet) => text.pets[pet].breed),
+    name: row(TYPE.name, design.nameSize, MIN_TYPE_SIZE.name, nameTop, names,
+              (pet) => text.pets[pet].name),
     owner,
     ig: {
       runs: igRuns.map((run) => igMove.run(run)),
@@ -533,6 +609,10 @@ export const isMoved = (a: Adjust) => Boolean(a.dx || a.dy || a.scale !== 1);
 /* ------------------------------------------------------------------ *
  * Applying one part's change
  * ------------------------------------------------------------------ */
+
+/** The same box, moved sideways — all a pet's column ever does to one, since
+ *  its size is already in the box `columnBox` hands back. */
+const slid = (r: CardRect, dx: number): CardRect => ({ ...r, x: r.x + dx });
 
 /** The box `adjust` leaves: grown about its own centre, then slid. */
 const moved = (base: CardRect, adjust: Adjust): CardRect => {

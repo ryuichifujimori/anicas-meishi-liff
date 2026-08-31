@@ -254,21 +254,46 @@ export type TypeSpec = (typeof TYPE)[keyof typeof TYPE];
 export type TypeWeight = (typeof TYPE)[keyof typeof TYPE]["weight"];
 
 /**
- * The smallest type may be set, in millimetres, and as a fraction of the card
- * width — the floor a run the talent is shrinking is stopped at.
+ * The smallest each run may be set, in millimetres — the floor a run the
+ * talent is shrinking is stopped at, one per KIND of run rather than one for
+ * the card.
  *
- * 1.5 mm is 6 Q, the smallest size Japanese print is ordinarily set at: the Q
- * system counts in quarter-millimetres and 6 Q is where captions and fine
- * print bottom out. The card's own smallest run — `TYPE.breed`, at 1.82 mm —
- * sits above it, which is what leaves a pet's column somewhere to shrink to.
+ * A pet's column holds two runs of very different jobs. The name is what the
+ * card is for and is read across a desk, so it stops at 3.0 mm. The breed is a
+ * label under it and can go smaller — 1.8 mm, just under the 1.82 mm the
+ * design sets it at. Shrinking a column therefore parks the breed first and
+ * goes on taking the name down until it too bottoms out.
  *
- * A run the fitting rules have ALREADY pushed below the floor — a long breed
- * squeezed to clear its neighbour — cannot be shrunk any further; it can still
- * be grown.
+ * `other` covers the runs that are not a pet's: the Instagram name and handle.
+ * 1.5 mm is 6 Q — the Q system counts in quarter-millimetres and 6 Q is where
+ * Japanese fine print bottoms out.
+ *
+ * A run the fitting rules have ALREADY pushed below its floor — a long breed
+ * squeezed to clear its neighbour — is never pushed back UP to it: it simply
+ * cannot be shrunk any further.
  */
-const MIN_TYPE_MM = 1.5;
+const MIN_TYPE_MM = { name: 3.0, breed: 1.8, other: 1.5 } as const;
 
-export const MIN_TYPE_SIZE = MIN_TYPE_MM / CARD_TRIM_MM.width;
+export const MIN_TYPE_SIZE = {
+  name: MIN_TYPE_MM.name / CARD_TRIM_MM.width,
+  breed: MIN_TYPE_MM.breed / CARD_TRIM_MM.width,
+  other: MIN_TYPE_MM.other / CARD_TRIM_MM.width,
+} as const;
+
+/**
+ * How close type — and the QR — may come to the trimmed card's left and right
+ * edges, as a fraction of the card width.
+ *
+ * The card is cut out of a larger sheet and the cut wanders, so anything
+ * pushed flush to the trim line risks being shaved. 2 mm is the margin the
+ * design's own type already keeps: the Instagram glyph starts 3.6 mm in and
+ * the QR ends 4.1 mm from the right, so nothing moves when this is applied to
+ * a card nobody has touched. The photo is exempt — it is meant to run to the
+ * card's edge.
+ */
+const SAFE_MARGIN_MM = 2.0;
+
+export const SAFE_MARGIN = SAFE_MARGIN_MM / CARD_TRIM_MM.width;
 
 /**
  * The smallest a printed QR module may be, in millimetres.
