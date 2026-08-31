@@ -144,7 +144,7 @@ export async function generateMeishiPrintPdf(
     qrPitch: input.qr?.modulePitch ?? null,
   });
 
-  const slot = place(card, placed.photo);
+  const slot = place(card, placed.photo.box);
   const photo = input.composedPhoto
     ? await embedPhoto(pdf, input.composedPhoto, slot, options)
     : null;
@@ -171,12 +171,28 @@ export async function generateMeishiPrintPdf(
   placeCard(template);
 
   if (photo) {
+    // The picture is cut off where the ribbon stops covering its lower edge —
+    // see PHOTO_TUCK — by clipping rather than by cropping the bitmap, so the
+    // pixels that do land are the pixels that always landed. A slot that does
+    // not reach that line is drawn with no clipping path at all, and an
+    // untouched card's page is byte for byte the page it was.
+    const shown = place(card, placed.photo.drawn);
+    const cut = shown.height < slot.height;
+    if (cut) {
+      page.pushOperators(
+        lib.pushGraphicsState(),
+        lib.rectangle(shown.x, pageH - shown.top - shown.height, shown.width, shown.height),
+        lib.clip(),
+        lib.endPath(),
+      );
+    }
     page.drawImage(photo, {
       x: slot.x,
       y: pageH - slot.top - slot.height,
       width: slot.width,
       height: slot.height,
     });
+    if (cut) page.pushOperators(lib.popGraphicsState());
   }
 
   // The ribbon's white band goes IN FRONT of the photo and hides its lower

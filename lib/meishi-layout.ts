@@ -155,6 +155,27 @@ export const RIBBON_BAND = {
 } as const;
 
 /**
+ * Where the photo's lower edge is tucked under the ribbon — and as far down as
+ * the photo is ever DRAWN, wherever the talent has put it.
+ *
+ * /meishi-ribbon.png was lifted off the template by turning the template's
+ * white into transparency, so the ribbon's own white fill came away with it:
+ * the two tails are outlines with nothing behind them. Anything of the photo
+ * that reaches a tail shows straight through it, which is why a photo taken
+ * further down than the design puts it starts showing its square bottom
+ * corners.
+ *
+ * Measured off the file, the widest unbroken opaque run across the card is
+ * px 56…990 of 1046 (row 850) and it narrows from there down — px 64…982 at
+ * row 870, px 86…960 at row 922 — while the photo slot is px 52…994. So no
+ * row of the band covers the slot from side to side, and the design's own
+ * lower edge is already as far down as the photo can be taken. Both renderers
+ * cut the picture off here; at the design's own placement the cut falls on the
+ * edge that was there anyway and changes nothing.
+ */
+export const PHOTO_TUCK = LAYOUT.photo.top + LAYOUT.photo.height;
+
+/**
  * Where /meishi-template.png draws the Instagram glyph: its ink box, measured
  * off the file (px 69…171 × 1464…1565), with `left`/`width` as card-width
  * fractions and `top`/`height` as card-height fractions.

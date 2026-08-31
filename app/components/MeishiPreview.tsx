@@ -1,6 +1,12 @@
 "use client";
 
-import { useRef, useState, type CSSProperties, type PointerEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent,
+} from "react";
 import type { Pet } from "@/lib/types";
 import {
   type Adjust,
@@ -8,6 +14,7 @@ import {
   type FaceAdjust,
   type MeasureRun,
   type PartKey,
+  type PlacedPhoto,
   type PlacedRun,
   type ResolvedCard,
   readPart,
@@ -99,9 +106,10 @@ export function MeishiPreview({
             fills without clipping — and the slot only ever changes size, never
             shape, so that holds wherever the talent puts it. Drawn ON TOP of
             the template background and intentionally extended into the ribbon
-            band; the ribbon overlay below is then drawn over it. */}
+            band; the ribbon overlay below is then drawn over it, down to the
+            line the picture is cut off at. */}
         {composedPhoto && (
-          <div className="absolute overflow-hidden" style={frame(card.photo)}>
+          <div className="absolute overflow-hidden" style={photoFrame(card.photo)}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={composedPhoto}
@@ -302,6 +310,19 @@ function OwnerLine({
   return <div style={style}>{text}</div>;
 }
 
+/**
+ * The photo's slot as CSS, cut off where the ribbon stops covering its lower
+ * edge — see `PHOTO_TUCK`. A slot that does not reach that line is given no
+ * cut at all, so a card whose photo nobody has moved carries exactly the
+ * declarations it always did.
+ */
+function photoFrame(photo: PlacedPhoto): CSSProperties {
+  const style = frame(photo.box);
+  const cut = photo.box.height - photo.drawn.height;
+  if (cut > 0) style.clipPath = `inset(0 0 ${(cut / photo.box.height) * 100}% 0)`;
+  return style;
+}
+
 /** A card rectangle as the CSS that puts a box exactly there. */
 function frame(rect: CardRect): CSSProperties {
   return {
@@ -330,6 +351,16 @@ const CORNERS = [
  *  otherwise. */
 const TOUCH_SLOP = 0.008;
 
+/**
+ * How long the parts' frames show themselves when the preview first appears —
+ * long enough to be seen, short enough not to be read as part of the card.
+ *
+ * It is the whole of the affordance: nothing is written on the screen, and
+ * nothing is left behind, because the frames are gone from the page when it
+ * has run.
+ */
+const HINT_MS = 1100;
+
 type Point = { x: number; y: number };
 
 type Drag =
@@ -351,8 +382,19 @@ function Editor({
   onChange: (adjust: FaceAdjust) => void;
 }) {
   const [selected, setSelected] = useState<PartKey | null>(null);
+  /** Where the part being dragged has lined itself up, while it is being
+   *  dragged and no longer — see `lib/card-adjust.ts`'s table. */
+  const [guide, setGuide] = useState<number | null>(null);
+  /** The one-off flash that shows what can be picked up. It runs when the
+   *  preview appears, and the frames leave the page with it. */
+  const [hinting, setHinting] = useState(true);
   const host = useRef<HTMLDivElement | null>(null);
   const drag = useRef<Drag | null>(null);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setHinting(false), HINT_MS);
+    return () => clearTimeout(timer);
+  }, []);
 
   /** Pointer position in card fractions: x across the width, y down the height. */
   const at = (e: PointerEvent): Point | null => {
@@ -391,6 +433,7 @@ function Editor({
   const onDown = (e: PointerEvent<HTMLDivElement>) => {
     const point = at(e);
     if (!point) return;
+    setHinting(false);
     const key = hit(card, point, selected);
     setSelected(key);
     if (!key) return;
@@ -403,11 +446,15 @@ function Editor({
     const point = at(e);
     if (!d || !point) return;
     if (d.kind === "move") {
-      set(d.key, {
+      // Lined up on the way IN, so what is stored is what the talent watched
+      // it stop on — and the line that says why is drawn from the same answer.
+      const { adjust: held, guide: line } = card.snap(d.key, {
         ...d.from,
         dx: d.from.dx + (point.x - d.start.x),
         dy: d.from.dy + (point.y - d.start.y),
       });
+      setGuide(line);
+      onChange(writePart(adjust, d.key, held));
       return;
     }
     // The part scales about its own centre, which a scale drag never moves, so
@@ -420,6 +467,7 @@ function Editor({
 
   const release = () => {
     drag.current = null;
+    setGuide(null);
   };
 
   const rect = selected ? rectOf(selected) : null;
@@ -427,12 +475,39 @@ function Editor({
   return (
     <div
       ref={host}
-      className="absolute inset-0 touch-none"
+      // `select-none` matters as much as `touch-none`: without it a drag over
+      // the card starts one of the browser's own gestures — a text selection,
+      // and from a second press on that selection a native drag — which takes
+      // the pointer away mid-move and leaves the part stranded.
+      className="absolute inset-0 touch-none select-none"
       onPointerDown={onDown}
       onPointerMove={onMove}
       onPointerUp={release}
       onPointerCancel={release}
     >
+      {/* What can be picked up, said once and then gone. */}
+      {hinting &&
+        card.parts.map((part) => (
+          <div
+            key={part.key}
+            aria-hidden
+            data-hint=""
+            className="absolute border-2 border-[#2D6A4F] pointer-events-none"
+            style={{ ...frame(part.rect), animation: `meishi-hint ${HINT_MS}ms ease-out both` }}
+          />
+        ))}
+
+      {/* Where the part being dragged has lined itself up. It exists only
+          while the finger is down: let go and it is gone. */}
+      {guide !== null && (
+        <div
+          aria-hidden
+          data-guide=""
+          className="absolute top-0 bottom-0 w-px -translate-x-1/2 bg-[#2D6A4F] pointer-events-none"
+          style={{ left: pct(guide) }}
+        />
+      )}
+
       {selected && rect && (
         <div
           className="absolute border-2 border-[#2D6A4F] pointer-events-none"

@@ -25,6 +25,7 @@ import {
   LINE_HEIGHT,
   MIN_QR_MODULE_MM,
   MIN_TYPE_SIZE,
+  PHOTO_TUCK,
   RIBBON_BAND,
   SAFE_MARGIN,
   TYPE,
@@ -265,6 +266,83 @@ const qrFloor = (pitch: number) => {
  */
 const PHOTO_FLOOR = 0.5;
 
+/**
+ * The photo as it is drawn: the whole slot, and the part of it that reaches
+ * the card.
+ *
+ * The photo's lower edge is meant to be hidden by the ribbon, and `PHOTO_TUCK`
+ * is as far down as the ribbon's band actually covers it — so the picture is
+ * cut off there however far the slot has been taken. The slot itself is left
+ * whole: that is what a finger moves and a handle resizes, and it is the box
+ * the frame is drawn on.
+ */
+export type PlacedPhoto = { box: CardRect; drawn: CardRect };
+
+/** The photo, cut off at the line the ribbon tucks it behind. A slot that does
+ *  not reach the line is handed back untouched, so a card nobody has moved the
+ *  photo on is drawn exactly as it always was. */
+const tucked = (box: CardRect): PlacedPhoto => {
+  const over = box.y + box.height - PHOTO_TUCK;
+  return over > 0
+    ? { box, drawn: { ...box, height: Math.max(0, box.height - over) } }
+    : { box, drawn: box };
+};
+
+/* ------------------------------------------------------------------ *
+ * Lining a part up
+ * ------------------------------------------------------------------ */
+
+/** The card's own middle, which is where most of the design is hung from. */
+const CARD_MIDDLE = 0.5;
+
+/**
+ * How near a part has to come before it lines itself up, in millimetres across
+ * the card: wide enough for a finger to fall into, narrow enough that a
+ * placement deliberately set a couple of millimetres off still stands.
+ */
+const SNAP_REACH_MM = 1.5;
+
+const SNAP_REACH = SNAP_REACH_MM / CARD_TRIM_MM.width;
+
+/** What a part being dragged sideways has around it, for the table to read. */
+type SnapRoom = {
+  /** The middle of the part, where the finger has it now. */
+  middle: number;
+  /** What stands on either side of it: a neighbouring column, or the margin. */
+  left: number;
+  right: number;
+};
+
+/**
+ * THE TABLE: every place a part lines itself up to, in the order they are
+ * tried. Each row says where the part's middle wants to sit, given the room
+ * around it.
+ *
+ * Another place to line up to is another row here and nothing else — the drag,
+ * the line drawn on the preview and the value that gets stored all come from
+ * this list, so none of them has to learn about it separately.
+ */
+type SnapRule = {
+  /** Where this row wants the part's middle, or null when it has nothing to
+   *  say about the part in hand. */
+  at: (room: SnapRoom) => number | null;
+};
+
+const SNAP_TABLE: SnapRule[] = [
+  // The card's own middle.
+  { at: () => CARD_MIDDLE },
+  // Halfway between whatever stands on either side — with two or three pets,
+  // where the gaps to the neighbouring columns come out equal.
+  { at: (room) => (room.left + room.right) / 2 },
+];
+
+/** A part's change with the table applied, and the line to show for it — null
+ *  when it did not land on anything. */
+export type Snapped = { adjust: Adjust; guide: number | null };
+
+/** Close enough to say a part came to rest exactly where it was aimed. */
+const SETTLED = 1e-9;
+
 /* ------------------------------------------------------------------ *
  * Where everything lands
  * ------------------------------------------------------------------ */
@@ -299,7 +377,7 @@ export type PlacedRun = {
 export type Part = { key: PartKey; rect: CardRect };
 
 export type ResolvedCard = {
-  photo: CardRect;
+  photo: PlacedPhoto;
   breed: PlacedRun;
   name: PlacedRun;
   owner: PlacedRun;
@@ -317,6 +395,13 @@ export type ResolvedCard = {
    * inside them BEFORE it is stored rather than only on its way to the page.
    */
   clamp: (key: PartKey, adjust: Adjust) => Adjust;
+  /**
+   * The same, with the lining-up table applied: what to store for a part being
+   * dragged sideways, and where to draw the line that says why it stopped.
+   * Held to the card's limits either way, so a part that cannot reach a place
+   * on the table simply does not line up to it.
+   */
+  snap: (key: PartKey, adjust: Adjust) => Snapped;
 };
 
 /** A string's width, in ems, as the renderer asking will actually set it. */
@@ -535,6 +620,47 @@ export function resolveCard(input: ResolveInput): ResolvedCard {
     return clampAdjust(part.rect, value, part.floor, boundsFor(key as FixedKey));
   };
 
+  /** Where a part comes to sit at a given change — the box its frame is drawn
+   *  on, and the box the lining-up table measures. */
+  const boxOf = (key: PartKey, value: Adjust): CardRect | null => {
+    const pet = petIndex(key);
+    if (pet !== null) {
+      const box = columnBox(pet, value.scale);
+      return box.width ? slid(box, value.dx) : null;
+    }
+    const part = fixed[key as FixedKey];
+    return part.usable && part.rect.width ? moved(part.rect, value) : null;
+  };
+
+  const snap = (key: PartKey, value: Adjust): Snapped => {
+    const held = clamp(key, value);
+    // The photo is the one part not held inside the safe margin — it is
+    // artwork, and it is meant to run to the card's edges — so it has nothing
+    // to line up with and is left where the finger put it.
+    const box = key === "photo" ? null : boxOf(key, held);
+    if (!box) return { adjust: held, guide: null };
+
+    const pet = petIndex(key);
+    const bounds = pet !== null ? columnBounds(pet) : boundsFor(key as FixedKey);
+    const room: SnapRoom = {
+      middle: box.x + box.width / 2,
+      left: bounds.left,
+      right: bounds.right,
+    };
+
+    for (const rule of SNAP_TABLE) {
+      const target = rule.at(room);
+      if (target === null || Math.abs(target - room.middle) > SNAP_REACH) continue;
+      const lined = clamp(key, { ...held, dx: held.dx + (target - room.middle) });
+      const landed = boxOf(key, lined);
+      // An edge or a neighbour may have stopped it short, and a part that did
+      // not get there has not lined up with anything.
+      if (!landed || Math.abs(landed.x + landed.width / 2 - target) > SETTLED) continue;
+      return { adjust: lined, guide: target };
+    }
+    return { adjust: held, guide: null };
+  };
+
   const held = {} as Record<FixedKey, Adjust>;
   for (const key of FIXED_PARTS) held[key] = clamp(key, readPart(adjust, key));
 
@@ -583,7 +709,7 @@ export function resolveCard(input: ResolveInput): ResolvedCard {
   const igMove = move(fixed.ig.rect, held.ig);
 
   return {
-    photo: moved(photoRect, held.photo),
+    photo: tucked(moved(photoRect, held.photo)),
     breed: row(TYPE.breed, design.breedSize, MIN_TYPE_SIZE.breed, breedTop, breeds,
                (pet) => text.pets[pet].breed),
     name: row(TYPE.name, design.nameSize, MIN_TYPE_SIZE.name, nameTop, names,
@@ -599,6 +725,7 @@ export function resolveCard(input: ResolveInput): ResolvedCard {
     qr: moved(qrRect, held.qr),
     parts,
     clamp,
+    snap,
   };
 }
 
