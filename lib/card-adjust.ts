@@ -290,39 +290,6 @@ const qrFloor = (pitch: number) => {
  */
 const PHOTO_FLOOR = 0.5;
 
-/**
- * The photo as it is drawn: the box the picture fills, and the part of it that
- * reaches the card.
- *
- * The picture is never drawn OUTSIDE THE WINDOW THE DESIGN CUT FOR IT. That
- * window is `LAYOUT.photo`, and the ribbon is drawn to sit against its lower
- * corners: /meishi-ribbon.png is one solid opaque silhouette (measured: its
- * widest row spans px 56…991 of 1046 and it narrows below that), so there is
- * no row where the ribbon covers the whole card. A picture taken past the
- * window would therefore come out beside the ribbon's tails, where the design
- * never puts anything — which is exactly what a talent sees when they make
- * the photo bigger.
- *
- * So moving and resizing pan and zoom the picture INSIDE the window rather
- * than moving the window. At the design's own placement the box and the
- * window are the same rectangle, and nothing is cut at all.
- */
-export type PlacedPhoto = { box: CardRect; drawn: CardRect };
-
-/** The part of the box that falls inside the window. A box already inside is
- *  handed back as it is, so a card nobody has touched carries no cut. */
-const windowed = (box: CardRect, hole: CardRect): PlacedPhoto => {
-  const left = Math.max(box.x, hole.x);
-  const top = Math.max(box.y, hole.y);
-  const right = Math.min(box.x + box.width, hole.x + hole.width);
-  const bottom = Math.min(box.y + box.height, hole.y + hole.height);
-  const drawn =
-    left <= box.x && top <= box.y && right >= box.x + box.width && bottom >= box.y + box.height
-      ? box
-      : { x: left, y: top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
-  return { box, drawn };
-};
-
 /* ------------------------------------------------------------------ *
  * Lining a part up
  * ------------------------------------------------------------------ */
@@ -441,7 +408,7 @@ export type PlacedRun = {
 export type Part = { key: PartKey; rect: CardRect };
 
 export type ResolvedCard = {
-  photo: PlacedPhoto;
+  photo: CardRect;
   breed: PlacedRun;
   name: PlacedRun;
   owner: PlacedRun;
@@ -773,7 +740,7 @@ export function resolveCard(input: ResolveInput): ResolvedCard {
   const igMove = move(fixed.ig.rect, held.ig);
 
   return {
-    photo: windowed(moved(photoRect, held.photo), photoRect),
+    photo: moved(photoRect, held.photo),
     breed: row(TYPE.breed, design.breedSize, MIN_TYPE_SIZE.breed, breedTop, breeds,
                (pet) => text.pets[pet].breed),
     name: row(TYPE.name, design.nameSize, MIN_TYPE_SIZE.name, nameTop, names,

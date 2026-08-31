@@ -11,6 +11,7 @@
  * print file. Do not restate any of these numbers in either renderer.
  */
 
+import { RIBBON_TOP } from "./ribbon-profile";
 import type { Pet } from "./types";
 
 /* ------------------------------------------------------------------ *
@@ -112,7 +113,7 @@ export const PAPER_COLOR = "#FFFFFF";
  *
  * Calibrated against the real reference card (public/sample-meishi.png,
  * 1070 × 1778). Measured landmarks (as a fraction of the card):
- *   photo slot              top .029, left .06, w .88, bottom .4924 (overlaps ribbon)
+ *   photo slot              top .029, left .05, w .90, bottom .4924 (overlaps ribbon)
  *   ribbon white band       top .45, box bottom .536 (tails reach ~.575)
  *   breed / name / owner    y ≈ .61 / .66 / .71
  *   Instagram icon          x ≈ .06–.16, y ≈ .84–.90 (drawn in the template)
@@ -137,25 +138,57 @@ export const PAPER_COLOR = "#FFFFFF";
  * sample row 872.5 — card height .49244, i.e. .4924 − .029 = .4634 of slot.
  * The old .471 put it .68 mm lower, which is what showed.
  *
- * The slot's SIDES are then set by what the ribbon actually covers ON THAT
- * ROW. Read off /meishi-ribbon.png, the tails are at their narrowest just
- * where the photo ends: row 856 is opaque from px 58 to 989, i.e. 3.050 mm to
- * 52.003 mm. A slot any wider than that leaves its bottom corners outside the
- * ribbon however well its lower edge is placed — 0.30 mm of photo showed
- * beside each tail at the old .05/.95. So the slot is inset to .06 / .94
- * (3.300 … 51.700 mm), which keeps the corners 0.25 mm (left) and 0.30 mm
- * (right) inside the ribbon.
+ * The slot's SIDES stay at the design's own .05 / .95. They are not what
+ * settles the photo's lower corners — `PHOTO_CLIP` is: the ribbon's ends are
+ * diagonal, so NO rectangle fits them (a wide slot pokes out past the tails, a
+ * narrow one leaves white between the two), and the photo is cut along the
+ * ribbon's own outline instead.
  *
  * `top`/`height` are fractions of the card HEIGHT; `left`/`right`/`width` are
  * fractions of the card WIDTH — exactly how CSS resolves them for an
  * absolutely positioned child, so the preview and the print file agree.
  */
 export const LAYOUT = {
-  photo: { top: 0.029, left: 0.06, width: 0.88, height: 0.4634 },
+  photo: { top: 0.029, left: 0.05, width: 0.9, height: 0.4634 },
   textBlock: { top: 0.6, left: 0.1, width: 0.8 },
   igBlock: { top: 0.845, left: 0.18, width: 0.46 },
   qr: { top: 0.8, right: 0.075, width: 0.265 },
 } as const;
+
+/** A point on the card: `x` a fraction of its width, `y` a fraction of its
+ *  height — the same convention as everything else here. */
+export type CardPoint = readonly [number, number];
+
+/**
+ * The shape the photo is drawn inside: everything ABOVE the ribbon's own upper
+ * outline.
+ *
+ * The ribbon's two ends are diagonal, so there is no rectangle that fits them.
+ * Widen the photo and its lower corners come out past the tails; narrow it and
+ * white opens up between the photo's edge and the tail that flares out beyond
+ * it. Both were tried. What actually fits the ribbon is the ribbon: the line
+ * comes from the artwork itself (`RIBBON_TOP`, traced by
+ * scripts/build-ribbon-profile.sh), carried a few rows PAST the outline so the
+ * photo runs on underneath and the ribbon's own antialiased edge blends into
+ * the photo rather than into the paper.
+ *
+ * ONE definition, used by both renderers — the preview turns it into a CSS
+ * `polygon()`, the print file into a clipping path — so the two cannot cut the
+ * picture to different shapes.
+ *
+ * It reaches well past the card on three sides so that a photo moved or grown
+ * to the card's edges still meets the polygon's straight sides rather than its
+ * corners.
+ */
+const CLIP_OVERSHOOT = 0.25;
+
+export const PHOTO_CLIP: readonly CardPoint[] = [
+  [-CLIP_OVERSHOOT, -CLIP_OVERSHOOT],
+  [1 + CLIP_OVERSHOOT, -CLIP_OVERSHOOT],
+  [1 + CLIP_OVERSHOOT, RIBBON_TOP[RIBBON_TOP.length - 1][1]],
+  ...[...RIBBON_TOP].reverse(),
+  [-CLIP_OVERSHOOT, RIBBON_TOP[0][1]],
+];
 
 /**
  * The ribbon's white band, in card-height fractions — measured off
@@ -171,8 +204,9 @@ export const LAYOUT = {
  * with no partial alpha anywhere, so nothing behind it shows through. What it
  * does NOT do is cover the card from side to side: its widest row spans
  * px 56…991 of 1046 (row 850) and it narrows below that, while the photo slot
- * is px 52…994. That is why the photo is drawn inside a window rather than
- * simply stopped at a line — see `PlacedPhoto` in lib/card-adjust.ts.
+ * is px 52…994. Its ends are diagonal too, which is why the photo is cut along
+ * the ribbon's own outline rather than at any straight line — see
+ * `PHOTO_CLIP` above.
  */
 export const RIBBON_BAND = {
   top: 785 / TEMPLATE_PX.height,

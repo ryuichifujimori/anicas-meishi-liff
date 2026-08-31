@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+# Rebuilds lib/ribbon-profile.ts — the line the photo is cut along.
+#
+# The ribbon's ends are diagonal, so no rectangle fits them: a wide photo
+# corner pokes out past the tails, a narrow one leaves white between the two.
+# The photo is therefore cut along the ribbon's OWN upper outline, taken
+# straight from the artwork.
+#
+# For every column of the card this reads the first row where
+# public/meishi-ribbon.png turns opaque. The line has to sit inside a band:
+#
+#   never ABOVE that first opaque row      or white paper shows through
+#   never BELOW that first opaque RUN      or the photo pokes out underneath
+#
+# Where the artwork has no ribbon at all (outside the tails' tips) the line
+# runs flat one row ABOVE the nearest column that does, so the photo ends level
+# with the tip and not one pixel of it hangs below, out in the open.
+#
+# The traced line is then simplified — but only into segments that are still
+# inside the band for every column they span, checked here before the file is
+# written. Where the outline steps almost straight up (the shoulders of the
+# tails) the line steps with it: two points at the same x. Nothing reads the
+# PNG at run time; replace the ribbon artwork and re-run this.
+#
+# Requires: python3 -m pip install pillow
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+python3 - <<'PY'
+import pathlib
+from PIL import Image
+
+SRC = "public/meishi-ribbon.png"
+OUT = pathlib.Path("lib/ribbon-profile.ts")
+TUCK = 8         # rows the photo carries on under the ribbon, at most
+CHECK = 16       # sub-positions per column the finished line is checked at
+
+im = Image.open(SRC).convert("RGBA")
+W, H = im.size
+alpha = im.split()[3].load()
+
+# --- trace: the first opaque row of each column, and how long that run is ---
+top, run = {}, {}
+for x in range(W):
+    first = next((y for y in range(H) if alpha[x, y] == 255), None)
+    if first is None:
+        continue
+    y = first
+    while y < H and alpha[x, y] == 255:
+        y += 1
+    top[x], run[x] = first, y - first
+
+lo, hi = min(top), max(top)
+assert min(run.values()) >= 2, "a column of the ribbon is too thin to hide the cut in"
+
+# The band the line must stay inside, column by column.
+low = {x: top[x] + 1 for x in top}                          # no white gap
+high = {x: top[x] + min(TUCK, run[x] - 1) for x in top}     # no photo below
+
+# --- the longest straight run that still fits the band, over and over -------
+flat_l, flat_r = top[lo] - 1, top[hi] - 1      # level with the tips, never below
+pts = [(0.0, float(flat_l)), (float(lo), float(flat_l))]    # flat past the tip
+y = (low[lo] + high[lo]) / 2
+pts.append((float(lo), y))
+x0 = float(lo)
+
+while x0 < hi + 1:
+    smin, smax = -1e18, 1e18
+    cone, end = {}, None
+    j = int(x0)
+    while j <= hi:
+        for xx in (j, j + 1):
+            if xx == x0:
+                continue
+            dx = xx - x0
+            a, b = (low[j] - y) / dx, (high[j] - y) / dx
+            smin, smax = max(smin, min(a, b)), min(smax, max(a, b))
+        if smin > smax:
+            break
+        end = j + 1
+        cone[end] = (smin, smax)
+        j += 1
+    k = end
+    smin, smax = cone[k]
+    if k <= hi:            # prefer an end point the next column can carry on from
+        a, b = (low[k] - y) / (k - x0), (high[k] - y) / (k - x0)
+        want = (max(smin, min(a, b)), min(smax, max(a, b)))
+        if want[0] <= want[1]:
+            smin, smax = want
+    s = (smin + smax) / 2
+    y = y + s * (k - x0)
+    x0 = float(k)
+    pts.append((x0, y))
+    if k <= hi and not (low[k] <= y <= high[k]):   # the outline steps: so do we
+        y = (low[k] + high[k]) / 2
+        pts.append((x0, y))
+
+pts.append((float(hi + 1), float(flat_r)))         # flush with the far tip
+pts.append((float(W), float(flat_r)))
+
+# --- prove it, before writing anything -------------------------------------
+# Only the sloped segments carry values; where the line steps straight up, the
+# column to its left is answered by the segment arriving and the column to its
+# right by the segment leaving.
+segs = [(a, b) for a, b in zip(pts, pts[1:]) if b[0] > a[0]]
+
+def at(x, side=0):
+    hits = [s for s in segs if s[0][0] <= x <= s[1][0]]
+    (ax, ay), (bx, by) = hits[0] if side <= 0 else hits[-1]
+    return ay + (by - ay) * (x - ax) / (bx - ax)
+
+worst_gap = worst_out = 0.0
+for x in range(W):
+    for i in range(CHECK + 1):
+        v = at(x + i / CHECK, side=1 if i == 0 else 0)
+        if x in top:
+            worst_gap = max(worst_gap, low[x] - 1 - v)      # above the first opaque row
+            worst_out = max(worst_out, v - (top[x] + run[x]))
+        else:
+            worst_out = max(worst_out, v - top[lo if x < lo else hi])
+assert worst_gap <= 0, f"the line rises above the ribbon by {worst_gap} rows"
+assert worst_out <= 0, f"the line falls below the ribbon by {worst_out} rows"
+
+tucks = [at(x + 0.5) - top[x] for x in top]
+body = ",\n".join(f"  [{x / W:.6f}, {y / H:.6f}]" for x, y in pts)
+OUT.write_text(f'''/**
+ * GENERATED by scripts/build-ribbon-profile.sh — do not edit by hand.
+ * Re-run that script whenever {SRC} changes.
+ *
+ * The line the photo is cut along: the ribbon's own upper outline, traced from
+ * the artwork ({W}×{H}). Points run LEFT TO RIGHT across the whole card, `x` as
+ * a fraction of the card width and `y` as a fraction of its height. Everything
+ * ABOVE this line is photo; below it the ribbon takes over. Two points may
+ * share an `x`: that is the line stepping up the shoulder of a tail.
+ *
+ * Traced from {W} columns down to {len(pts)} points. The line runs
+ * {min(tucks):.1f}–{max(tucks):.1f} rows below the ribbon's first opaque row, so the photo
+ * always ends underneath the ribbon and never past the end of it.
+ */
+export const RIBBON_TOP: readonly (readonly [number, number])[] = [
+{body},
+] as const;
+''')
+print(f"lib/ribbon-profile.ts  {len(pts)} points (from {W} columns)")
+print(f"  ribbon spans columns {lo}…{hi}; first opaque row {min(top.values())}…{max(top.values())}")
+print(f"  shortest opaque run {min(run.values())} rows; line sits {min(tucks):.1f}–{max(tucks):.1f} rows under the edge")
+print(f"  checked at {CHECK} points per column: worst rise {worst_gap:+.3f}, worst fall {worst_out:+.3f} rows")
+PY

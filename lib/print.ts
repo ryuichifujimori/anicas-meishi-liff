@@ -10,6 +10,7 @@ import {
   IG_MARK_COVER,
   PAGE_MM,
   PAPER_COLOR,
+  PHOTO_CLIP,
   PRINT_DPI,
   PRINT_FALLBACK_FONT,
   PRINT_FONTS,
@@ -144,7 +145,7 @@ export async function generateMeishiPrintPdf(
     qrPitch: input.qr?.modulePitch ?? null,
   });
 
-  const slot = place(card, placed.photo.box);
+  const slot = place(card, placed.photo);
   const photo = input.composedPhoto
     ? await embedPhoto(pdf, input.composedPhoto, slot, options)
     : null;
@@ -171,28 +172,29 @@ export async function generateMeishiPrintPdf(
   placeCard(template);
 
   if (photo) {
-    // The picture is cut to the window the design left for it — see
-    // PlacedPhoto — by clipping rather than by cropping the bitmap, so the
-    // pixels that do land are the pixels that always landed. A picture already
-    // inside the window is drawn with no clipping path at all, and an
-    // untouched card's page is byte for byte the page it was.
-    const shown = place(card, placed.photo.drawn);
-    const cut = placed.photo.drawn !== placed.photo.box;
-    if (cut) {
-      page.pushOperators(
-        lib.pushGraphicsState(),
-        lib.rectangle(shown.x, pageH - shown.top - shown.height, shown.width, shown.height),
-        lib.clip(),
-        lib.endPath(),
-      );
-    }
+    // The picture is cut along the ribbon's own outline — the same PHOTO_CLIP
+    // the preview cuts it with — as a clipping path rather than by cropping
+    // the bitmap, so the pixels that do land are the pixels that always landed.
+    const corner = ([x, y]: readonly [number, number]) => ({
+      x: card.x + x * card.width,
+      y: pageH - card.top - y * card.height,
+    });
+    const path = PHOTO_CLIP.map(corner);
+    page.pushOperators(
+      lib.pushGraphicsState(),
+      lib.moveTo(path[0].x, path[0].y),
+      ...path.slice(1).map((p) => lib.lineTo(p.x, p.y)),
+      lib.closePath(),
+      lib.clip(),
+      lib.endPath(),
+    );
     page.drawImage(photo, {
       x: slot.x,
       y: pageH - slot.top - slot.height,
       width: slot.width,
       height: slot.height,
     });
-    if (cut) page.pushOperators(lib.popGraphicsState());
+    page.pushOperators(lib.popGraphicsState());
   }
 
   // The ribbon's white band goes IN FRONT of the photo and hides its lower

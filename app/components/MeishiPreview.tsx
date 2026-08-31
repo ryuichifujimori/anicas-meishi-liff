@@ -9,7 +9,6 @@ import {
   type Guide,
   type MeasureRun,
   type PartKey,
-  type PlacedPhoto,
   type PlacedRun,
   type ResolvedCard,
   petIndex,
@@ -22,6 +21,7 @@ import {
   IG_MARK_COVER,
   LAYOUT,
   LINE_HEIGHT,
+  PHOTO_CLIP,
   TEMPLATE_ASPECT,
   cardText,
   cqw,
@@ -102,9 +102,9 @@ export function MeishiPreview({
             fills without clipping — and the slot only ever changes size, never
             shape, so that holds wherever the talent puts it. Drawn ON TOP of
             the template background and intentionally extended into the ribbon
-            band; the ribbon overlay below is then drawn over it. The picture
-            is cut to the window the design left for it, so moving and resizing
-            pan and zoom it inside that window. */}
+            band; the ribbon overlay below is then drawn over it. The picture is
+            cut along the ribbon's own outline (PHOTO_CLIP), so it meets the
+            ribbon exactly wherever it is moved or resized to. */}
         {composedPhoto && (
           <div className="absolute overflow-hidden" style={photoFrame(card.photo)}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -308,18 +308,19 @@ function OwnerLine({
 }
 
 /**
- * The photo's box as CSS, cut to the window the design left for it. A box that
- * is already inside the window is given no cut at all, so a card whose photo
- * nobody has moved carries exactly the declarations it always did.
+ * The photo's box as CSS, cut to `PHOTO_CLIP` — the shape that ends at the
+ * ribbon's own outline. The shape is fixed on the CARD, so it is restated here
+ * in the box's own coordinates: move or resize the photo and the picture slides
+ * and grows behind a cut that stays exactly on the ribbon.
  */
-function photoFrame(photo: PlacedPhoto): CSSProperties {
-  const style = frame(photo.box);
-  if (photo.drawn === photo.box) return style;
-  const { box, drawn } = photo;
-  const cut = (v: number) => `${(v / box.height) * 100}%`;
-  const side = (v: number) => `${(v / box.width) * 100}%`;
-  style.clipPath = `inset(${cut(drawn.y - box.y)} ${side(box.x + box.width - drawn.x - drawn.width)} ${cut(box.y + box.height - drawn.y - drawn.height)} ${side(drawn.x - box.x)})`;
-  return style;
+function photoFrame(rect: CardRect): CSSProperties {
+  const at = (v: number, from: number, size: number) => `${((v - from) / size) * 100}%`;
+  return {
+    ...frame(rect),
+    clipPath: `polygon(${PHOTO_CLIP.map(
+      ([x, y]) => `${at(x, rect.x, rect.width)} ${at(y, rect.y, rect.height)}`,
+    ).join(", ")})`,
+  };
 }
 
 /** A card rectangle as the CSS that puts a box exactly there. */
