@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type CSSProperties, type PointerEvent } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type PointerEvent } from "react";
 import type { Pet } from "@/lib/types";
 import {
   type Adjust,
@@ -380,12 +380,57 @@ function Editor({
   const set = (key: PartKey, value: Adjust) =>
     onChange(writePart(adjust, key, card.clamp(key, value)));
 
+  /**
+   * Every move of the finger is sent to the CARD, not to the page.
+   *
+   * A phone decides what a touch is FOR from the first move: if it settles on
+   * "this is a scroll", it takes the pointer away — `pointercancel` — and
+   * whatever was being dragged is left where it stood, which is what "the page
+   * scrolls and the photo does not move" looks like. `touch-action: none` is
+   * supposed to settle that question in the card's favour and on a desktop
+   * browser it does, but it cannot be relied on alone on a phone. So the move
+   * is refused outright as well.
+   *
+   * It has to be hung on the element by hand: React registers its own touch
+   * listeners as PASSIVE, and a passive listener's `preventDefault` does
+   * nothing at all.
+   */
+  useEffect(() => {
+    const surface = host.current;
+    if (!surface) return;
+    const refuse = (e: TouchEvent) => {
+      if (drag.current) e.preventDefault();
+    };
+    surface.addEventListener("touchmove", refuse, { passive: false });
+    return () => surface.removeEventListener("touchmove", refuse);
+  }, []);
+
+  /**
+   * Every later move of this finger is delivered to the SURFACE, wherever the
+   * finger actually is — so a corner pulled right off the card keeps resizing,
+   * and a part dragged past the edge keeps moving.
+   *
+   * The surface takes the capture rather than the handle that was touched: a
+   * handle is a few millimetres across and the finger leaves it immediately,
+   * and an element that stops being the pointer's target stops being told
+   * where the pointer went.
+   */
+  const capture = (e: PointerEvent<HTMLElement>) => {
+    // A phone can have taken the pointer away before this runs; the drag can
+    // still be followed from the events that reach the surface by bubbling.
+    try {
+      host.current?.setPointerCapture(e.pointerId);
+    } catch {
+      /* nothing to capture */
+    }
+  };
+
   const startScale = (key: PartKey) => (e: PointerEvent<HTMLElement>) => {
     const point = at(e);
     const rect = rectOf(key);
     if (!point || !rect) return;
     e.stopPropagation();
-    e.currentTarget.setPointerCapture(e.pointerId);
+    capture(e);
     drag.current = {
       kind: "scale",
       key,
@@ -400,7 +445,7 @@ function Editor({
     const key = hit(card, point, selected);
     setSelected(key);
     if (!key) return;
-    e.currentTarget.setPointerCapture(e.pointerId);
+    capture(e);
     drag.current = { kind: "move", key, from: readPart(adjust, key), start: point };
   };
 
@@ -441,8 +486,11 @@ function Editor({
       // `select-none` matters as much as `touch-none`: without it a drag over
       // the card starts one of the browser's own gestures — a text selection,
       // and from a second press on that selection a native drag — which takes
-      // the pointer away mid-move and leaves the part stranded.
+      // the pointer away mid-move and leaves the part stranded. On a phone the
+      // press-and-hold callout over the card's pictures does the same, so that
+      // is turned off here too.
       className="absolute inset-0 touch-none select-none"
+      style={{ WebkitTouchCallout: "none" }}
       onPointerDown={onDown}
       onPointerMove={onMove}
       onPointerUp={release}
@@ -482,8 +530,14 @@ function Editor({
               <span
                 key={i}
                 aria-hidden
+                data-handle=""
                 onPointerDown={startScale(selected)}
-                className="absolute w-7 h-7 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center pointer-events-auto"
+                // 44px square: what a fingertip needs, whatever the dot inside
+                // it looks like. `touch-none` is repeated here rather than left
+                // to the surface above — the property is not inherited, and a
+                // phone that reads it off the touched element alone would let
+                // a pull on a corner scroll the page instead.
+                className="absolute w-11 h-11 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center pointer-events-auto touch-none"
                 style={{ left: pct(corner.x), top: pct(corner.y) }}
               >
                 <span
