@@ -112,7 +112,7 @@ export const PAPER_COLOR = "#FFFFFF";
  *
  * Calibrated against the real reference card (public/sample-meishi.png,
  * 1070 × 1778). Measured landmarks (as a fraction of the card):
- *   photo slot              top .029, left .05, w .90, bottom .4924 (overlaps ribbon)
+ *   photo slot              top .029, left .06, w .88, bottom .4924 (overlaps ribbon)
  *   ribbon white band       top .45, box bottom .536 (tails reach ~.575)
  *   breed / name / owner    y ≈ .61 / .66 / .71
  *   Instagram icon          x ≈ .06–.16, y ≈ .84–.90 (drawn in the template)
@@ -137,12 +137,21 @@ export const PAPER_COLOR = "#FFFFFF";
  * sample row 872.5 — card height .49244, i.e. .4924 − .029 = .4634 of slot.
  * The old .471 put it .68 mm lower, which is what showed.
  *
+ * The slot's SIDES are then set by what the ribbon actually covers ON THAT
+ * ROW. Read off /meishi-ribbon.png, the tails are at their narrowest just
+ * where the photo ends: row 856 is opaque from px 58 to 989, i.e. 3.050 mm to
+ * 52.003 mm. A slot any wider than that leaves its bottom corners outside the
+ * ribbon however well its lower edge is placed — 0.30 mm of photo showed
+ * beside each tail at the old .05/.95. So the slot is inset to .06 / .94
+ * (3.300 … 51.700 mm), which keeps the corners 0.25 mm (left) and 0.30 mm
+ * (right) inside the ribbon.
+ *
  * `top`/`height` are fractions of the card HEIGHT; `left`/`right`/`width` are
  * fractions of the card WIDTH — exactly how CSS resolves them for an
  * absolutely positioned child, so the preview and the print file agree.
  */
 export const LAYOUT = {
-  photo: { top: 0.029, left: 0.05, width: 0.9, height: 0.4634 },
+  photo: { top: 0.029, left: 0.06, width: 0.88, height: 0.4634 },
   textBlock: { top: 0.6, left: 0.1, width: 0.8 },
   igBlock: { top: 0.845, left: 0.18, width: 0.46 },
   qr: { top: 0.8, right: 0.075, width: 0.265 },
