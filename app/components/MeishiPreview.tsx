@@ -313,19 +313,18 @@ function frame(rect: CardRect): CSSProperties {
  * Laying the card out by hand
  * ------------------------------------------------------------------ */
 
-/** Where the handles go. Dragging any of them scales the part about its own
- *  centre, so it grows and shrinks in place. */
-const CORNERS = [
-  { x: 0, y: 0 },
-  { x: 1, y: 0 },
-  { x: 0, y: 1 },
-  { x: 1, y: 1 },
-] as const;
-
 /** How much slop a touch gets around a part, in card widths (~3 px at the
  *  preview's size). A single row of small type would be hard to land on
  *  otherwise. */
 const TOUCH_SLOP = 0.008;
+
+/**
+ * Which parts two fingers may size: the photo, and only the photo. A pet's
+ * column is set at the size the whole card's type is set at, from the control
+ * under the preview — three names the same size is the thing a card of three
+ * pets is judged on, and two hands can only approximate it.
+ */
+const PINCHABLE = (key: PartKey) => petIndex(key) === null;
 
 /**
  * The green the editing marks are drawn in — the app's own, so the card is
@@ -335,9 +334,35 @@ const MARK = "#2D6A4F";
 
 type Point = { x: number; y: number };
 
+/**
+ * What two fingers are doing, as one reading: the point between them, how far
+ * apart they are, and the angle of the line joining them. Distances are in
+ * card WIDTHS on both axes, so a spread that is mostly up-and-down counts the
+ * same as one that is mostly side-to-side.
+ *
+ * The angle is read although nothing uses it yet. Turning the photo is the
+ * obvious next thing to ask of two fingers, and when it is asked for it is a
+ * line in `onMove` — not another way of listening to the hand.
+ */
+type Grip = { centre: Point; spread: number; angle: number };
+
+const grip = (a: Point, b: Point): Grip => ({
+  centre: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+  spread: Math.hypot(b.x - a.x, hToW(b.y - a.y)),
+  angle: Math.atan2(hToW(b.y - a.y), b.x - a.x),
+});
+
+/**
+ * What the hand is doing to one part.
+ *
+ * ONE finger moves it. TWO fingers on the same part size it — there is no
+ * handle to find, which is the whole point: a corner three millimetres across
+ * is not something anyone notices, and spreading two fingers on a picture is
+ * something everyone already does.
+ */
 type Drag =
   | { kind: "move"; key: PartKey; from: Adjust; start: Point }
-  | { kind: "scale"; key: PartKey; from: Adjust; reach: number };
+  | { kind: "pinch"; key: PartKey; from: Adjust; start: Grip };
 
 /**
  * The one thing the talent has to keep in their head is which part they are
@@ -359,6 +384,8 @@ function Editor({
   const [guide, setGuide] = useState<Guide | null>(null);
   const host = useRef<HTMLDivElement | null>(null);
   const drag = useRef<Drag | null>(null);
+  /** Every finger currently on the card, in the order they arrived. */
+  const fingers = useRef(new Map<number, Point>());
 
   /** Pointer position in card fractions: x across the width, y down the height. */
   const at = (e: PointerEvent): Point | null => {
@@ -401,8 +428,17 @@ function Editor({
     const refuse = (e: TouchEvent) => {
       if (drag.current) e.preventDefault();
     };
+    // And the same for the phone's own two-finger zoom, which Safari announces
+    // separately from the touches themselves.
+    const stopZoom = (e: Event) => e.preventDefault();
     surface.addEventListener("touchmove", refuse, { passive: false });
-    return () => surface.removeEventListener("touchmove", refuse);
+    surface.addEventListener("gesturestart", stopZoom);
+    surface.addEventListener("gesturechange", stopZoom);
+    return () => {
+      surface.removeEventListener("touchmove", refuse);
+      surface.removeEventListener("gesturestart", stopZoom);
+      surface.removeEventListener("gesturechange", stopZoom);
+    };
   }, []);
 
   /**
@@ -425,23 +461,32 @@ function Editor({
     }
   };
 
-  const startScale = (key: PartKey) => (e: PointerEvent<HTMLElement>) => {
-    const point = at(e);
-    const rect = rectOf(key);
-    if (!point || !rect) return;
-    e.stopPropagation();
-    capture(e);
-    drag.current = {
-      kind: "scale",
-      key,
-      from: readPart(adjust, key),
-      reach: reach(rect, point),
-    };
-  };
+  /** The two fingers a pinch is being read from, oldest first. */
+  const pair = () => [...fingers.current.values()].slice(0, 2);
 
   const onDown = (e: PointerEvent<HTMLDivElement>) => {
     const point = at(e);
     if (!point) return;
+    fingers.current.set(e.pointerId, point);
+    const held = drag.current;
+
+    // A second finger on the part already in hand turns the drag into a pinch:
+    // the same part, now sized by how far apart the two fingers are.
+    if (held && fingers.current.size === 2 && PINCHABLE(held.key)) {
+      const [a, b] = pair();
+      capture(e);
+      drag.current = {
+        kind: "pinch",
+        key: held.key,
+        from: readPart(adjust, held.key),
+        start: grip(a, b),
+      };
+      return;
+    }
+    // A third finger, or a second on a part that is not sized this way, is
+    // left to rest: the drag already in hand carries on unchanged.
+    if (held) return;
+
     const key = hit(card, point, selected);
     setSelected(key);
     if (!key) return;
@@ -450,32 +495,50 @@ function Editor({
   };
 
   const onMove = (e: PointerEvent<HTMLDivElement>) => {
-    const d = drag.current;
     const point = at(e);
-    if (!d || !point) return;
-    if (d.kind === "move") {
-      // Lined up on the way IN, so what is stored is what the talent watched
-      // it stop on — and the line that says why is drawn from the same answer.
-      const { adjust: held, guide: line } = card.snap(d.key, {
-        ...d.from,
-        dx: d.from.dx + (point.x - d.start.x),
-        dy: d.from.dy + (point.y - d.start.y),
+    if (!point) return;
+    if (fingers.current.has(e.pointerId)) fingers.current.set(e.pointerId, point);
+    const d = drag.current;
+    if (!d) return;
+
+    if (d.kind === "pinch") {
+      const [a, b] = pair();
+      if (!a || !b || !d.start.spread) return;
+      const now = grip(a, b);
+      // How much further apart the fingers are is how much bigger the picture
+      // is, and the point between them takes the picture along with it.
+      set(d.key, {
+        scale: (d.from.scale * now.spread) / d.start.spread,
+        dx: d.from.dx + (now.centre.x - d.start.centre.x),
+        dy: d.from.dy + (now.centre.y - d.start.centre.y),
       });
-      setGuide(line);
-      onChange(writePart(adjust, d.key, held));
       return;
     }
-    // The part scales about its own centre, which a scale drag never moves, so
-    // the live frame is as good a centre to measure from as the one the finger
-    // went down on.
-    const rect = rectOf(d.key);
-    if (!rect || !d.reach) return;
-    set(d.key, { ...d.from, scale: (d.from.scale * reach(rect, point)) / d.reach });
+
+    // Lined up on the way IN, so what is stored is what the talent watched it
+    // stop on — and the line that says why is drawn from the same answer.
+    const { adjust: held, guide: line } = card.snap(d.key, {
+      ...d.from,
+      dx: d.from.dx + (point.x - d.start.x),
+      dy: d.from.dy + (point.y - d.start.y),
+    });
+    setGuide(line);
+    onChange(writePart(adjust, d.key, held));
   };
 
-  const release = () => {
-    drag.current = null;
+  const release = (e: PointerEvent<HTMLDivElement>) => {
+    fingers.current.delete(e.pointerId);
+    const d = drag.current;
+    if (!d) return;
     setGuide(null);
+    if (!fingers.current.size) {
+      drag.current = null;
+      return;
+    }
+    // One finger of a pinch lifted and the other is still down: carry on from
+    // where THAT one is, measured afresh, so nothing jumps.
+    const [next] = pair();
+    drag.current = { kind: "move", key: d.key, from: readPart(adjust, d.key), start: next };
   };
 
   const rect = selected ? rectOf(selected) : null;
@@ -517,36 +580,14 @@ function Editor({
       {guide && <GuideMark guide={guide} />}
 
       {selected && rect && (
+        // The frame the part in hand is wearing. Nothing is hung on it: the
+        // photo is sized by spreading two fingers on it and a pet's column by
+        // the control under the preview, so there is no corner to find.
         <div
           data-selected=""
           className="absolute border-2 pointer-events-none"
           style={{ ...frame(rect), borderColor: MARK }}
-        >
-          {/* Only the parts that can be resized carry handles. A pet's column
-              is sized with the rest of the card's type, from the control under
-              the preview, so its frame says "drag me" and nothing else. */}
-          {petIndex(selected) === null &&
-            CORNERS.map((corner, i) => (
-              <span
-                key={i}
-                aria-hidden
-                data-handle=""
-                onPointerDown={startScale(selected)}
-                // 44px square: what a fingertip needs, whatever the dot inside
-                // it looks like. `touch-none` is repeated here rather than left
-                // to the surface above — the property is not inherited, and a
-                // phone that reads it off the touched element alone would let
-                // a pull on a corner scroll the page instead.
-                className="absolute w-11 h-11 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center pointer-events-auto touch-none"
-                style={{ left: pct(corner.x), top: pct(corner.y) }}
-              >
-                <span
-                  className="w-3 h-3 rounded-full bg-white border-2 shadow"
-                  style={{ borderColor: MARK }}
-                />
-              </span>
-            ))}
-        </div>
+        />
       )}
     </div>
   );
@@ -587,18 +628,6 @@ function GuideMark({ guide }: { guide: Guide }) {
         />
       ))}
     </>
-  );
-}
-
-/**
- * How far a point sits from a box's centre, in card widths — one number, so a
- * handle drag reads the same whatever shape the box is. The scale it produces
- * is that distance now over what it was when the finger went down.
- */
-function reach(rect: CardRect, point: Point): number {
-  return Math.hypot(
-    point.x - (rect.x + rect.width / 2),
-    hToW(point.y - (rect.y + rect.height / 2)),
   );
 }
 
