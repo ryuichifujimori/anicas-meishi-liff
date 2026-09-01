@@ -6,15 +6,15 @@
  * the artwork (1046×1738). Points run LEFT TO RIGHT across the whole card, `x` as
  * a fraction of the card width and `y` as a fraction of its height. Everything
  * ABOVE this line is photo; below it the ribbon takes over. Two points may
- * share an `x`: that is the line stepping up the shoulder of a tail.
+ * share an `x`: that is the line stepping up the shoulder of a tail. The line
+ * runs from the left tail's tip to the right one and no further — see
+ * `RIBBON_SPAN`.
  *
- * Traced from 1046 columns down to 14 points. The line runs
+ * Traced from 1046 columns down to 10 points. The line runs
  * 2.0–6.5 rows below the ribbon's first opaque row, so the photo
  * always ends underneath the ribbon and never past the end of it.
  */
 export const RIBBON_TOP: readonly (readonly [number, number])[] = [
-  [0.000000, 0.488493],
-  [0.053537, 0.488493],
   [0.053537, 0.490219],
   [0.127151, 0.490506],
   [0.127151, 0.474971],
@@ -25,6 +25,12 @@ export const RIBBON_TOP: readonly (readonly [number, number])[] = [
   [0.873805, 0.474147],
   [0.873805, 0.489931],
   [0.947419, 0.489643],
-  [0.947419, 0.487917],
-  [1.000000, 0.487917],
 ] as const;
+
+/**
+ * How far across the card the ribbon reaches at all — its leftmost and its
+ * rightmost opaque column, as fractions of the card width. Past these there is
+ * no ribbon at ANY height, so there is nothing that could hide a photo, and
+ * the photo is cut off here.
+ */
+export const RIBBON_SPAN = { left: 0.053537, right: 0.947419 } as const;

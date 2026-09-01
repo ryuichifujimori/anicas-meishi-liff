@@ -12,9 +12,12 @@
 #   never ABOVE that first opaque row      or white paper shows through
 #   never BELOW that first opaque RUN      or the photo pokes out underneath
 #
-# Where the artwork has no ribbon at all (outside the tails' tips) the line
-# runs flat one row ABOVE the nearest column that does, so the photo ends level
-# with the tip and not one pixel of it hangs below, out in the open.
+# Where the artwork has no ribbon at all — left of the left tail's tip, right
+# of the right one — the line simply STOPS. There is nothing out there to hide
+# a photo behind: the tips are the ribbon's leftmost and rightmost points at
+# EVERY row (below a tip the tail turns back inwards), so any photo past them
+# stands in the open however it is cut. The span the line covers is written out
+# beside it, and the photo is cut off at its ends.
 #
 # The traced line is then simplified — but only into segments that are still
 # inside the band for every column they span, checked here before the file is
@@ -58,10 +61,8 @@ low = {x: top[x] + 1 for x in top}                          # no white gap
 high = {x: top[x] + min(TUCK, run[x] - 1) for x in top}     # no photo below
 
 # --- the longest straight run that still fits the band, over and over -------
-flat_l, flat_r = top[lo] - 1, top[hi] - 1      # level with the tips, never below
-pts = [(0.0, float(flat_l)), (float(lo), float(flat_l))]    # flat past the tip
 y = (low[lo] + high[lo]) / 2
-pts.append((float(lo), y))
+pts = [(float(lo), y)]                        # the line begins at the tip
 x0 = float(lo)
 
 while x0 < hi + 1:
@@ -95,9 +96,6 @@ while x0 < hi + 1:
         y = (low[k] + high[k]) / 2
         pts.append((x0, y))
 
-pts.append((float(hi + 1), float(flat_r)))         # flush with the far tip
-pts.append((float(W), float(flat_r)))
-
 # --- prove it, before writing anything -------------------------------------
 # Only the sloped segments carry values; where the line steps straight up, the
 # column to its left is answered by the segment arriving and the column to its
@@ -110,14 +108,11 @@ def at(x, side=0):
     return ay + (by - ay) * (x - ax) / (bx - ax)
 
 worst_gap = worst_out = 0.0
-for x in range(W):
+for x in range(lo, hi + 1):
     for i in range(CHECK + 1):
         v = at(x + i / CHECK, side=1 if i == 0 else 0)
-        if x in top:
-            worst_gap = max(worst_gap, low[x] - 1 - v)      # above the first opaque row
-            worst_out = max(worst_out, v - (top[x] + run[x]))
-        else:
-            worst_out = max(worst_out, v - top[lo if x < lo else hi])
+        worst_gap = max(worst_gap, low[x] - 1 - v)          # above the first opaque row
+        worst_out = max(worst_out, v - (top[x] + run[x]))
 assert worst_gap <= 0, f"the line rises above the ribbon by {worst_gap} rows"
 assert worst_out <= 0, f"the line falls below the ribbon by {worst_out} rows"
 
@@ -131,7 +126,9 @@ OUT.write_text(f'''/**
  * the artwork ({W}×{H}). Points run LEFT TO RIGHT across the whole card, `x` as
  * a fraction of the card width and `y` as a fraction of its height. Everything
  * ABOVE this line is photo; below it the ribbon takes over. Two points may
- * share an `x`: that is the line stepping up the shoulder of a tail.
+ * share an `x`: that is the line stepping up the shoulder of a tail. The line
+ * runs from the left tail's tip to the right one and no further — see
+ * `RIBBON_SPAN`.
  *
  * Traced from {W} columns down to {len(pts)} points. The line runs
  * {min(tucks):.1f}–{max(tucks):.1f} rows below the ribbon's first opaque row, so the photo
@@ -140,6 +137,14 @@ OUT.write_text(f'''/**
 export const RIBBON_TOP: readonly (readonly [number, number])[] = [
 {body},
 ] as const;
+
+/**
+ * How far across the card the ribbon reaches at all — its leftmost and its
+ * rightmost opaque column, as fractions of the card width. Past these there is
+ * no ribbon at ANY height, so there is nothing that could hide a photo, and
+ * the photo is cut off here.
+ */
+export const RIBBON_SPAN = {{ left: {lo / W:.6f}, right: {(hi + 1) / W:.6f} }} as const;
 ''')
 print(f"lib/ribbon-profile.ts  {len(pts)} points (from {W} columns)")
 print(f"  ribbon spans columns {lo}…{hi}; first opaque row {min(top.values())}…{max(top.values())}")

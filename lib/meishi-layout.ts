@@ -11,7 +11,7 @@
  * print file. Do not restate any of these numbers in either renderer.
  */
 
-import { RIBBON_TOP } from "./ribbon-profile";
+import { RIBBON_SPAN, RIBBON_TOP } from "./ribbon-profile";
 import type { Pet } from "./types";
 
 /* ------------------------------------------------------------------ *
@@ -188,25 +188,28 @@ const ribbonTopAt = (x: number): number => {
 };
 
 /**
- * How far off the card a straight side is carried when it has nothing to cut.
- * Big enough that it can never meet the picture: the picture is held inside
- * the card, and the window's sides are well inside it.
+ * How far off the card the TOP is carried when it has nothing to cut. Big
+ * enough that it can never meet the picture: the picture is held inside the
+ * card, and the window's own top is well inside it.
  */
 const CLIP_SLACK = 0.25;
 
 /**
  * The window as a polygon, for a picture sitting at `picture`.
  *
- * A side the picture stops short of is carried off the card instead of being
- * laid down where it is: a clip edge that lands exactly on the picture's own
- * edge makes the renderer draw that edge twice, and the row of pixels along it
- * comes out different. An untouched card has to come out of both renderers
- * exactly as it always did, and untouched, the picture fills the window edge
- * to edge on all three straight sides.
+ * The LEFT and RIGHT sides are the ribbon's own ends. Past them there is no
+ * ribbon at any height — the tips are the ribbon's leftmost and rightmost
+ * points at every row, and below a tip the tail turns back inwards — so a
+ * photo out there stands in the open whatever height it is cut at. The real
+ * card agrees: its picture runs 2.892…52.108 mm, which is the ribbon's own
+ * span, not the slot's rounded .05/.95.
  *
- * A side is only carried off when it has nothing to do, so this cannot let any
- * of the picture out: on that side the picture's own edge is already at or
- * inside the window.
+ * The TOP is the slot's, and it is carried off the card when the picture stops
+ * short of it: a clip edge laid exactly on the picture's own edge makes the
+ * renderer draw that edge twice, and the row of pixels along it comes out
+ * different. Untouched, the picture fills the slot's top edge to edge.
+ *
+ * The BOTTOM is the ribbon's own outline.
  */
 export function photoClip(picture: {
   x: number;
@@ -214,11 +217,8 @@ export function photoClip(picture: {
   width: number;
   height: number;
 }): CardPoint[] {
-  const left = picture.x < PHOTO_WINDOW.left ? PHOTO_WINDOW.left : PHOTO_WINDOW.left - CLIP_SLACK;
-  const right =
-    picture.x + picture.width > PHOTO_WINDOW.right
-      ? PHOTO_WINDOW.right
-      : PHOTO_WINDOW.right + CLIP_SLACK;
+  const left = Math.max(PHOTO_WINDOW.left, RIBBON_SPAN.left);
+  const right = Math.min(PHOTO_WINDOW.right, RIBBON_SPAN.right);
   const top = picture.y < PHOTO_WINDOW.top ? PHOTO_WINDOW.top : PHOTO_WINDOW.top - CLIP_SLACK;
 
   return [
