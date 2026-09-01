@@ -17,7 +17,7 @@ export function Step5Confirm({ data, submitting, error, onSubmit, onBack }: Prop
       <h2 className="text-xl font-bold text-center">入力内容の確認</h2>
 
       <MeishiPreview
-        composedPhoto={data.composedPhoto}
+        photos={data.photos}
         qrSrc={data.qr?.png ?? null}
         pets={data.pets}
         petCount={data.petCount}

@@ -12,18 +12,14 @@ export type PetPhoto = {
   height: number;
 };
 
-export type PhotoTransform = {
-  // position is the center of the image in canvas coordinates (0-1, normalized to canvas)
-  cx: number;
-  cy: number;
-};
-
 export type FormData = {
   petCount: 1 | 2 | 3;
   pets: Pet[];
   photos: (PetPhoto | null)[];
-  transforms: PhotoTransform[];
-  composedPhoto: string | null; // data URL of composed image
+  // The pets' pictures composed onto one transparent canvas, one per share of
+  // the card's photo window. Made by the preview itself, and what both the
+  // print file and the payload are built from.
+  composedPhoto: string | null;
   // Where the talent has dragged and resized the five movable parts of the
   // card, one entry per face. Untouched, every part is at the design's own
   // position and size and the card is byte-for-byte what it always was.

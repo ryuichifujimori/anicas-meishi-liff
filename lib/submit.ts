@@ -1,6 +1,7 @@
 "use client";
 
 import { generateMeishiPrintPdf, type MeishiPrintInput } from "./print";
+import { usablePhotos } from "./photo-slots";
 import type { FormData, SubmitPayload } from "./types";
 
 /**
@@ -15,6 +16,9 @@ import type { FormData, SubmitPayload } from "./types";
 export function toPrintInput(form: FormData): MeishiPrintInput {
   return {
     composedPhoto: form.composedPhoto,
+    photos: usablePhotos(form.photos, form.petCount).map((p) => ({
+      aspect: p.width / p.height,
+    })),
     qr: form.qr,
     pets: form.pets,
     petCount: form.petCount,

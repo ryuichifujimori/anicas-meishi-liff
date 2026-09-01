@@ -18,12 +18,12 @@
  * `lib/meishi-layout.ts` already states the design.
  */
 
+import { type SlotAdjust, UNTOUCHED_SLOT, clampSlot, slotRect } from "./photo-slots";
 import {
   CARD_TRIM_MM,
   LAYOUT,
   LINE_HEIGHT,
   MIN_TYPE_SIZE,
-  RIBBON_BAND,
   SAFE_MARGIN,
   TYPE,
   type CardText,
@@ -43,32 +43,33 @@ import {
  * ------------------------------------------------------------------ */
 
 /**
- * The parts of the card that are always there, whatever the talent typed —
- * which is the photo, and only the photo. Alongside it stands ONE PART PER PET
- * (see `petPart`), so a card carries one grabbable part plus as many pets as
- * it names.
+ * What the talent can pick up, and there are only two kinds.
  *
- * The Instagram line and the QR used to be grabbable too, and are not any
- * more. Both are set into the design at a place the design chose — the glyph
- * the template itself draws, the QR in the corner clear of the trim — and
- * moving them was never worth the two extra things to work out on a phone
- * screen. They are drawn where `lib/meishi-layout.ts` puts them, at the size
- * it sets, always.
+ * ONE SLOT PER PICTURE — the card's photo window is shared out between the
+ * pets' pictures, and each share is picked up on its own — and ONE COLUMN PER
+ * PET, holding that pet's breed and name.
+ *
+ * Nothing else is touchable. The Instagram line and the QR used to be: both
+ * are set into the design at a place the design chose — the glyph the template
+ * itself draws, the QR in the corner clear of the trim — and moving them was
+ * never worth the extra things to work out on a phone screen. The owner line,
+ * the ribbon and the artwork were never movable.
  */
-export const FIXED_PARTS = ["photo"] as const;
+export type PartKey = `photo${number}` | `pet${number}`;
 
-export type FixedKey = (typeof FIXED_PARTS)[number];
-
-/** How a part is named: one of the three fixed parts, or a pet's column. */
-export type PartKey = FixedKey | `pet${number}`;
-
+export const photoPart = (index: number) => `photo${index}` as PartKey;
 export const petPart = (index: number) => `pet${index}` as PartKey;
 
-/** The pet a key stands for, or null when it names one of the fixed parts. */
-export const petIndex = (key: PartKey): number | null => {
-  const found = /^pet(\d+)$/.exec(key);
+const indexIn = (prefix: string) => (key: PartKey): number | null => {
+  const found = new RegExp(`^${prefix}(\\d+)$`).exec(key);
   return found ? Number(found[1]) : null;
 };
+
+/** The picture a key stands for, or null when it names a pet's column. */
+export const photoIndex = indexIn("photo");
+
+/** The pet a key stands for, or null when it names a picture's slot. */
+export const petIndex = indexIn("pet");
 
 /**
  * One part's change: how far it was dragged, and how much bigger or smaller it
@@ -104,7 +105,13 @@ export const NO_COLUMN: ColumnAdjust = { dx: 0 };
  * entry yet.
  */
 export type FaceAdjust = {
-  photo: Adjust;
+  /**
+   * What the talent did to each picture INSIDE its own share of the photo
+   * window: `lib/photo-slots.ts` says what the numbers mean. One entry per
+   * picture, so swapping the picture in a slot later is a change of source and
+   * not a change of shape.
+   */
+  photos: SlotAdjust[];
   pets: ColumnAdjust[];
   /**
    * How big the pets' type is set, as a multiple of the size the design's own
@@ -136,7 +143,7 @@ export const TEXT_RANGE = { min: 0.6, max: 1.4, step: 0.02 } as const;
 export type CardAdjust = { front: FaceAdjust };
 
 export const untouchedFace = (): FaceAdjust => ({
-  photo: { ...NO_ADJUST },
+  photos: [],
   pets: [],
   text: 1,
 });
@@ -144,13 +151,14 @@ export const untouchedFace = (): FaceAdjust => ({
 export const untouchedCard = (): CardAdjust => ({ front: untouchedFace() });
 
 /**
- * One part's change, whichever kind it is — so the preview's drag handling
- * does not have to know that a pet's column is stored more narrowly than the
- * photo is. A column always reads back `dy: 0`.
+ * One part's change, whichever kind it is — so the preview's drag handling does
+ * not have to know that a pet's column is stored more narrowly than a picture's
+ * slot is. A column always reads back `dy: 0`.
  */
 export function readPart(face: FaceAdjust, key: PartKey): Adjust {
-  const pet = petIndex(key);
-  if (pet === null) return face[key as FixedKey];
+  const slot = photoIndex(key);
+  if (slot !== null) return face.photos[slot] ?? { ...UNTOUCHED_SLOT };
+  const pet = petIndex(key) ?? 0;
   const column = face.pets[pet] ?? NO_COLUMN;
   // A column's size is the card's one type size, not the column's own.
   return { dx: column.dx, dy: 0, scale: face.text };
@@ -159,8 +167,14 @@ export function readPart(face: FaceAdjust, key: PartKey): Adjust {
 /** The same, going the other way. A column keeps only what it can hold: where
  *  it was slid to, and nothing else. */
 export function writePart(face: FaceAdjust, key: PartKey, value: Adjust): FaceAdjust {
-  const pet = petIndex(key);
-  if (pet === null) return { ...face, [key]: value };
+  const slot = photoIndex(key);
+  if (slot !== null) {
+    const photos = face.photos.slice();
+    while (photos.length <= slot) photos.push({ ...UNTOUCHED_SLOT });
+    photos[slot] = value;
+    return { ...face, photos };
+  }
+  const pet = petIndex(key) ?? 0;
   const pets = face.pets.slice();
   while (pets.length <= pet) pets.push({ ...NO_COLUMN });
   pets[pet] = { dx: value.dx };
@@ -196,56 +210,6 @@ const CARD_BOUNDS: Bounds = { left: 0, right: 1, top: 0, bottom: 1 };
 const SAFE_BOUNDS: Bounds = { ...CARD_BOUNDS, left: SAFE_MARGIN, right: 1 - SAFE_MARGIN };
 
 /**
- * Brings one part's change inside what the card allows: the box may not leave
- * its bounds, and the scale is held between `floor` and the largest size that
- * still fits inside those bounds. Clamping happens HERE rather than in the
- * drag handler, so a value that arrives from a stored payload is held to the
- * same rules as one being dragged right now.
- */
-function clampAdjust(
-  base: CardRect,
-  adjust: Adjust,
-  floor: number,
-  bounds: Bounds,
-): Adjust {
-  const fit = Math.min(
-    (bounds.right - bounds.left) / base.width,
-    (bounds.bottom - bounds.top) / base.height,
-  );
-  const scale = Math.min(Math.max(adjust.scale, floor), fit);
-
-  const scaled = resize(base, scale);
-  const x = slack(scaled.x, scaled.width, bounds.left, bounds.right);
-  const y = slack(scaled.y, scaled.height, bounds.top, bounds.bottom);
-
-  return {
-    scale,
-    dx: Math.min(Math.max(adjust.dx, x.min), x.max),
-    dy: Math.min(Math.max(adjust.dy, y.min), y.max),
-  };
-}
-
-/** The box `scale` leaves, grown or shrunk about its own centre. */
-const resize = (r: CardRect, scale: number): CardRect => ({
-  x: r.x + (r.width * (1 - scale)) / 2,
-  y: r.y + (r.height * (1 - scale)) / 2,
-  width: r.width * scale,
-  height: r.height * scale,
-});
-
-/**
- * Where the photo's PICTURE may go. It is the one thing on the card that
- * reaches the edges — it is artwork, and it is meant to; what it may NOT do is
- * drop below the ribbon's white band, which is what hides its lower edge.
- *
- * These are limits on the picture, not on what is drawn. Whatever the picture
- * does inside them, only the part of it that falls inside the design's own
- * window (`photoClip` in lib/meishi-layout.ts), which does not move, ever
- * reaches the card.
- */
-const PHOTO_BOUNDS: Bounds = { ...CARD_BOUNDS, bottom: RIBBON_BAND.bottom };
-
-/**
  * How far each part may be SHRUNK, as a multiple of the size the design gives
  * it. There is no ceiling to state: how far a part can be grown is decided by
  * the card's own edges — and, for a pet's column, by its neighbours.
@@ -270,14 +234,6 @@ const typeFloor = (size: number, floor: number) =>
  *  floor. Growing is never held; only shrinking is. */
 const heldSize = (size: number, floor: number, scale: number) =>
   Math.max(heldAt(size, floor), size * scale);
-
-/**
- * The photo has no legibility floor to hold it up, so it gets a plain one:
- * half the size the design gives it. Below that the slot has stopped being the
- * card's portrait, and a drag that overshoots would otherwise collapse it to
- * nothing.
- */
-const PHOTO_FLOOR = 0.5;
 
 /* ------------------------------------------------------------------ *
  * Lining a part up
@@ -398,9 +354,9 @@ export type Part = { key: PartKey; rect: CardRect };
 
 export type ResolvedCard = {
   /**
-   * The box the PICTURE fills, moved and grown by whatever the talent did.
-   * What reaches the card is this box cut to the design's own window, which
-   * does not move — see `parts`, which offers the window, not this box.
+   * The window the composed picture fills — the design's own, never moved and
+   * never grown. What the talent does happens INSIDE it, one slot at a time,
+   * and is already baked into the picture both renderers are handed.
    */
   photo: CardRect;
   breed: PlacedRun;
@@ -438,9 +394,12 @@ export type ResolveInput = {
   text: CardText;
   measure: MeasureRun;
   adjust: FaceAdjust;
-  /** Whether a photo has been composed — the one thing that decides whether
-   *  there is anything on the card to pick up. */
-  hasPhoto: boolean;
+  /**
+   * The pictures the card is carrying, in order — their shapes, which is all
+   * that is needed to know how far each one may be panned inside its own share
+   * of the window. No pictures means nothing to pick up there.
+   */
+  photos: { aspect: number }[];
 };
 
 /**
@@ -618,39 +577,36 @@ export function resolveCard(input: ResolveInput): ResolvedCard {
     ),
   ];
 
-  const fixed: Record<FixedKey, { rect: CardRect; floor: number; usable: boolean }> = {
-    photo: { rect: photoRect, floor: PHOTO_FLOOR, usable: input.hasPhoto },
-  };
-
   /* ---- and where everything actually ends up ---- */
 
+  const slots = input.photos.length;
+
   const clamp = (key: PartKey, value: Adjust): Adjust => {
-    const pet = petIndex(key);
-    if (pet !== null) {
-      return clampColumn(pet, value, columnBounds(pet));
+    const slot = photoIndex(key);
+    if (slot !== null) {
+      const picture = input.photos[slot];
+      if (!picture) return { ...UNTOUCHED_SLOT };
+      return clampSlot(value, picture.aspect, slots);
     }
-    const part = fixed[key as FixedKey];
-    if (!part.usable || !part.rect.width || !part.rect.height) return { ...NO_ADJUST };
-    return clampAdjust(part.rect, value, part.floor, PHOTO_BOUNDS);
+    return clampColumn(petIndex(key) ?? 0, value, columnBounds(petIndex(key) ?? 0));
   };
 
   /** Where a part comes to sit at a given change — the box its frame is drawn
-   *  on, and the box the lining-up table measures. */
+   *  on, and the box the lining-up table measures. A picture's slot does not
+   *  move: what the talent changes is the picture behind it. */
   const boxOf = (key: PartKey, value: Adjust): CardRect | null => {
-    const pet = petIndex(key);
-    if (pet !== null) {
-      const box = columnBox(pet, value.scale);
-      return box.width ? slid(box, value.dx) : null;
-    }
-    const part = fixed[key as FixedKey];
-    return part.usable && part.rect.width ? moved(part.rect, value) : null;
+    const slot = photoIndex(key);
+    if (slot !== null) return slot < slots ? slotRect(slot, slots) : null;
+    const pet = petIndex(key) ?? 0;
+    const box = columnBox(pet, value.scale);
+    return box.width ? slid(box, value.dx) : null;
   };
 
   const snap = (key: PartKey, value: Adjust): Snapped => {
     const held = clamp(key, value);
     const pet = petIndex(key);
-    // The photo has nothing to line up with: its window is fixed on the card,
-    // and what a drag moves is the picture behind it.
+    // A picture's slot has nothing to line up with: the slot is fixed on the
+    // card, and what a drag moves is the picture inside it.
     if (pet === null) return { adjust: held, guide: null };
     const box = boxOf(key, held);
     if (!box) return { adjust: held, guide: null };
@@ -674,9 +630,6 @@ export function resolveCard(input: ResolveInput): ResolvedCard {
     }
     return { adjust: held, guide: null };
   };
-
-  const held = {} as Record<FixedKey, Adjust>;
-  for (const key of FIXED_PARTS) held[key] = clamp(key, readPart(adjust, key));
 
   const columns = Array.from({ length: petCount }, (_, pet) =>
     clamp(petPart(pet), readPart(adjust, petPart(pet))),
@@ -711,18 +664,18 @@ export function resolveCard(input: ResolveInput): ResolvedCard {
     if (rect.width > 0 && rect.height > 0) parts.push({ key, rect });
   };
   // Topmost first, which is reverse paint order: the pet columns (which never
-  // overlap each other), then the photo.
+  // overlap each other), then the pictures' slots.
   for (let pet = 0; pet < petCount; pet++) {
     offer(petPart(pet), slid(columnBox(pet, columns[pet].scale), columns[pet].dx));
   }
-  // The photo is offered as its WINDOW, which never moves and never grows.
-  // Dragging it and pulling its corners move and grow the picture BEHIND the
-  // window, so the frame the talent has hold of is exactly the shape the
-  // picture will be cut to.
-  if (fixed.photo.usable) offer("photo", photoRect);
+  // Each picture is offered as its own SHARE of the window, and that share
+  // never moves and never grows. Dragging it and spreading two fingers on it
+  // move and grow the picture INSIDE it, so the frame the talent has hold of is
+  // exactly the shape that picture will be cut to.
+  for (let slot = 0; slot < slots; slot++) offer(photoPart(slot), slotRect(slot, slots));
 
   return {
-    photo: moved(photoRect, held.photo),
+    photo: photoRect,
     breed: row(TYPE.breed, design.breedSize, MIN_TYPE_SIZE.breed, breedTop, breeds,
                (pet) => text.pets[pet].breed),
     name: row(TYPE.name, design.nameSize, MIN_TYPE_SIZE.name, nameTop, names,
@@ -743,12 +696,6 @@ export function resolveCard(input: ResolveInput): ResolvedCard {
 /** The same box, moved sideways — all a pet's column ever does to one, since
  *  its size is already in the box `columnBox` hands back. */
 const slid = (r: CardRect, dx: number): CardRect => ({ ...r, x: r.x + dx });
-
-/** The box `adjust` leaves: grown about its own centre, then slid. */
-const moved = (base: CardRect, adjust: Adjust): CardRect => {
-  const scaled = resize(base, adjust.scale);
-  return { ...scaled, x: scaled.x + adjust.dx, y: scaled.y + adjust.dy };
-};
 
 /* ------------------------------------------------------------------ *
  * Flowed runs and the boxes they occupy

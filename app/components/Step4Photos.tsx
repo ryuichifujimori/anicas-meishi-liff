@@ -1,18 +1,16 @@
 "use client";
 
 import { useRef, useState } from "react";
-import type { Pet, PetPhoto, PhotoTransform } from "@/lib/types";
+import type { Pet, PetPhoto } from "@/lib/types";
 import { loadAndNormalizeImage } from "@/lib/image";
 import { type FaceAdjust, TEXT_RANGE, untouchedFace } from "@/lib/card-adjust";
-import { PhotoComposer } from "./PhotoComposer";
+import { usablePhotos } from "@/lib/photo-slots";
 import { MeishiPreview } from "./MeishiPreview";
 
 type Props = {
   petCount: 1 | 2 | 3;
   pets: Pet[];
   photos: (PetPhoto | null)[];
-  transforms: PhotoTransform[];
-  composedPhoto: string | null;
   qrSrc: string | null;
   igHandle: string;
   igName: string;
@@ -20,7 +18,6 @@ type Props = {
   /** Where the talent has put the card's five movable parts. */
   adjust: FaceAdjust;
   onPhotosChange: (photos: (PetPhoto | null)[]) => void;
-  onTransformsChange: (t: PhotoTransform[]) => void;
   onComposed: (dataUrl: string) => void;
   onAdjustChange: (adjust: FaceAdjust) => void;
   onNext: () => void;
@@ -31,15 +28,12 @@ export function Step4Photos({
   petCount,
   pets,
   photos,
-  transforms,
-  composedPhoto,
   qrSrc,
   igHandle,
   igName,
   ownerName,
   adjust,
   onPhotosChange,
-  onTransformsChange,
   onComposed,
   onAdjustChange,
   onNext,
@@ -66,11 +60,7 @@ export function Step4Photos({
     }
   };
 
-  const validPhotos = photos
-    .slice(0, petCount)
-    .filter((p): p is PetPhoto => p !== null);
-  const photoCount = validPhotos.length;
-  const hasAny = photoCount >= 1;
+  const hasAny = usablePhotos(photos, petCount).length >= 1;
 
   return (
     <div className="space-y-5">
@@ -117,27 +107,13 @@ export function Step4Photos({
 
       {hasAny && (
         <div className="space-y-2">
-          <h3 className="font-semibold text-sm">写真の編集</h3>
-          <PhotoComposer
-            photos={validPhotos}
-            transforms={transforms.slice(0, photoCount)}
-            onTransformsChange={(t) => {
-              const next = transforms.slice();
-              t.forEach((v, i) => (next[i] = v));
-              onTransformsChange(next);
-            }}
-            onComposed={onComposed}
-          />
-        </div>
-      )}
-
-      {hasAny && (
-        <div className="space-y-2">
           <h3 className="font-semibold text-sm">名刺プレビュー</h3>
           {/* The card is laid out here, on the card itself: touch a part to
-              pick it up, drag it, and pull its corners to resize it. */}
+              pick it up, one finger to move it, two to size a picture. The
+              pictures are framed here too — there is no second screen above
+              this one any more, because the card IS the frame. */}
           <MeishiPreview
-            composedPhoto={composedPhoto}
+            photos={photos}
             qrSrc={qrSrc}
             pets={pets}
             petCount={petCount}
@@ -146,6 +122,7 @@ export function Step4Photos({
             ownerName={ownerName}
             adjust={adjust}
             onAdjustChange={onAdjustChange}
+            onComposed={onComposed}
           />
           {/* The size of the pets' type, for the whole card at once. Set here
               rather than by dragging a column's corner, because what a card of

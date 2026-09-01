@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent } from "react";
-import type { Pet } from "@/lib/types";
+import type { Pet, PetPhoto } from "@/lib/types";
+import { COMPOSED, drawSlots, usablePhotos } from "@/lib/photo-slots";
+import { dataUrlToImage } from "@/lib/image";
 import {
   type Adjust,
   type CardRect,
@@ -12,6 +14,7 @@ import {
   type PlacedRun,
   type ResolvedCard,
   petIndex,
+  photoIndex,
   readPart,
   resolveCard,
   writePart,
@@ -32,7 +35,8 @@ import {
 import { useMeasureRun } from "@/lib/card-metrics";
 
 type Props = {
-  composedPhoto: string | null;
+  /** The pictures themselves, one per pet. The card composes them. */
+  photos: (PetPhoto | null)[];
   qrSrc: string | null;
   pets: Pet[];
   petCount: 1 | 2 | 3;
@@ -46,7 +50,18 @@ type Props = {
    * Without it the preview is only a preview — step 5 shows it that way.
    */
   onAdjustChange?: (adjust: FaceAdjust) => void;
+  /**
+   * Handed the composed picture whenever it settles — what the print file and
+   * the payload are made from. Only step 4 asks for it; step 5 is showing a
+   * card that has already been composed.
+   */
+  onComposed?: (dataUrl: string) => void;
 };
+
+/** How long the picture has to stand still before it is turned into a data URL
+ *  — long enough that a drag does not pay for one on every move of the finger,
+ *  short enough that it is always ready by the time the next screen is. */
+const SETTLE_MS = 150;
 
 /**
  * On-screen preview of the finished card — and, in step 4, the surface the
@@ -60,7 +75,7 @@ type Props = {
  * same fractions into PDF points.
  */
 export function MeishiPreview({
-  composedPhoto,
+  photos,
   qrSrc,
   pets,
   petCount,
@@ -69,10 +84,17 @@ export function MeishiPreview({
   ownerName,
   adjust,
   onAdjustChange,
+  onComposed,
 }: Props) {
   const measure = useMeasureRun();
   const text = cardText({ pets, petCount, ownerName, igName, igHandle });
-  const card = resolveCard({ text, measure, adjust, hasPhoto: Boolean(composedPhoto) });
+  const pictures = usablePhotos(photos, petCount);
+  const card = resolveCard({
+    text,
+    measure,
+    adjust,
+    photos: pictures.map((p) => ({ aspect: p.width / p.height })),
+  });
 
   return (
     <div className="relative w-full max-w-[360px] mx-auto">
@@ -88,22 +110,20 @@ export function MeishiPreview({
           className="absolute inset-0 w-full h-full object-contain pointer-events-none"
         />
 
-        {/* Photo. Canvas aspect (~1.15) is matched to this slot so object-cover
-            fills without clipping — and the slot only ever changes size, never
-            shape, so that holds wherever the talent puts it. Drawn ON TOP of
-            the template background and intentionally extended into the ribbon
-            band; the ribbon overlay below is then drawn over it. The picture is
-            cut to the design's own window (photoClip), whose lower edge is the
-            ribbon's outline — so however far it is moved or how big it is made,
-            none of it reaches the card outside that window. */}
-        {composedPhoto && (
+        {/* The pictures, composed onto one canvas: each pet's picture in its
+            own share of the window, cover-fit and then moved and grown by
+            whatever the talent did to THAT share. Drawn ON TOP of the template
+            and intentionally extended into the ribbon band; the ribbon overlay
+            below is then drawn over it.
+
+            The canvas fills the design's own window exactly and is cut to it
+            (photoClip), whose lower edge is the ribbon's outline — so whatever
+            happens inside a share, none of it reaches the card outside the
+            window. It is the SAME canvas the print file is made from, so what
+            is on screen and what is printed cannot come apart. */}
+        {pictures.length > 0 && (
           <div className="absolute overflow-hidden" style={photoFrame(card.photo)}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={composedPhoto}
-              alt="pet"
-              className="w-full h-full object-cover"
-            />
+            <Composed photos={pictures} adjust={adjust} onComposed={onComposed} />
           </div>
         )}
 
@@ -172,6 +192,68 @@ export function MeishiPreview({
         <Editor card={card} adjust={adjust} onChange={onAdjustChange} />
       )}
     </div>
+  );
+}
+
+/**
+ * The pets' pictures on one canvas — drawn here, in the card, rather than on a
+ * screen of its own above it.
+ *
+ * The drawing is cheap and runs on every change, so a finger on a picture moves
+ * it without waiting. Turning the canvas into a data URL is not cheap, so that
+ * waits until the picture has stood still for a moment; the print file and the
+ * payload are made from what it hands back.
+ */
+function Composed({
+  photos,
+  adjust,
+  onComposed,
+}: {
+  photos: PetPhoto[];
+  adjust: FaceAdjust;
+  onComposed?: (dataUrl: string) => void;
+}) {
+  const canvas = useRef<HTMLCanvasElement | null>(null);
+  const [imgs, setImgs] = useState<HTMLImageElement[]>([]);
+  const settle = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const urls = photos.map((p) => p.dataUrl).join("|");
+
+  useEffect(() => {
+    let dropped = false;
+    Promise.all(photos.map((p) => dataUrlToImage(p.dataUrl))).then((loaded) => {
+      if (!dropped) setImgs(loaded);
+    });
+    return () => {
+      dropped = true;
+    };
+    // The pictures themselves are what matters, not the array they arrive in.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urls]);
+
+  const slots = adjust.photos;
+  useEffect(() => {
+    const cv = canvas.current;
+    const ctx = cv?.getContext("2d");
+    if (!cv || !ctx || imgs.length !== photos.length || !imgs.length) return;
+    drawSlots(ctx, imgs, slots);
+    if (!onComposed) return;
+    if (settle.current) clearTimeout(settle.current);
+    settle.current = setTimeout(() => onComposed(cv.toDataURL("image/png")), SETTLE_MS);
+    return () => {
+      if (settle.current) clearTimeout(settle.current);
+    };
+    // `onComposed` is a callback, not a reason to redraw.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imgs, slots, photos.length]);
+
+  return (
+    <canvas
+      ref={canvas}
+      width={COMPOSED.width}
+      height={COMPOSED.height}
+      aria-label="pet"
+      className="w-full h-full pointer-events-none"
+    />
   );
 }
 
@@ -324,7 +406,7 @@ const TOUCH_SLOP = 0.008;
  * under the preview — three names the same size is the thing a card of three
  * pets is judged on, and two hands can only approximate it.
  */
-const PINCHABLE = (key: PartKey) => petIndex(key) === null;
+const PINCHABLE = (key: PartKey) => photoIndex(key) !== null;
 
 /**
  * The green the editing marks are drawn in — the app's own, so the card is
@@ -398,6 +480,19 @@ function Editor({
   };
 
   const rectOf = (key: PartKey) => card.parts.find((part) => part.key === key)?.rect ?? null;
+
+  /**
+   * What one unit of a part's `dx`/`dy` is worth on the card.
+   *
+   * A pet's column is slid across the CARD, so its unit is the card. A
+   * picture is moved inside its own share of the photo window, so its unit is
+   * that share — which is what makes the picture keep up with the finger
+   * whatever the share is sized at.
+   */
+  const travelOf = (key: PartKey): Point => {
+    const slot = photoIndex(key) === null ? null : rectOf(key);
+    return slot ? { x: slot.width, y: slot.height } : { x: 1, y: 1 };
+  };
 
   // Held to what the card allows before it is stored, not after — so a finger
   // that runs past an edge does not build up travel it has to give back before
@@ -501,6 +596,8 @@ function Editor({
     const d = drag.current;
     if (!d) return;
 
+    const unit = travelOf(d.key);
+
     if (d.kind === "pinch") {
       const [a, b] = pair();
       if (!a || !b || !d.start.spread) return;
@@ -509,8 +606,8 @@ function Editor({
       // is, and the point between them takes the picture along with it.
       set(d.key, {
         scale: (d.from.scale * now.spread) / d.start.spread,
-        dx: d.from.dx + (now.centre.x - d.start.centre.x),
-        dy: d.from.dy + (now.centre.y - d.start.centre.y),
+        dx: d.from.dx + (now.centre.x - d.start.centre.x) / unit.x,
+        dy: d.from.dy + (now.centre.y - d.start.centre.y) / unit.y,
       });
       return;
     }
@@ -519,8 +616,8 @@ function Editor({
     // stop on — and the line that says why is drawn from the same answer.
     const { adjust: held, guide: line } = card.snap(d.key, {
       ...d.from,
-      dx: d.from.dx + (point.x - d.start.x),
-      dy: d.from.dy + (point.y - d.start.y),
+      dx: d.from.dx + (point.x - d.start.x) / unit.x,
+      dy: d.from.dy + (point.y - d.start.y) / unit.y,
     });
     setGuide(line);
     onChange(writePart(adjust, d.key, held));

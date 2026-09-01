@@ -54,8 +54,12 @@ import {
  */
 
 export type MeishiPrintInput = {
-  /** Composed pet photo (data URL) — what `MeishiPreview` shows in the slot. */
+  /** Composed pet photo (data URL) — the same canvas `MeishiPreview` draws. */
   composedPhoto: string | null;
+  /** The shapes of the pictures that went into it. Nothing here is redrawn
+   *  from them — the composed picture arrives finished — but the layout is
+   *  worked out from the same input in both renderers. */
+  photos: { aspect: number }[];
   /** Styled QR and its overlay geometry, from `lib/qr.ts`. */
   qr: MeishiQr | null;
   pets: Pet[];
@@ -140,7 +144,7 @@ export async function generateMeishiPrintPdf(
     text,
     measure: (spec, value) => measureRun(fonts[spec.weight], value),
     adjust: input.adjust,
-    hasPhoto: Boolean(input.composedPhoto),
+    photos: input.photos,
   });
 
   const slot = place(card, placed.photo);
