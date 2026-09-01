@@ -17,14 +17,14 @@ export function Step5Confirm({ data, submitting, error, onSubmit, onBack }: Prop
       <h2 className="text-xl font-bold text-center">入力内容の確認</h2>
 
       <MeishiPreview
-        composedPhoto={data.composedPhoto}
-        nameSpread={data.nameSpread}
+        photos={data.photos}
         qrSrc={data.qr?.png ?? null}
         pets={data.pets}
         petCount={data.petCount}
         igHandle={data.ig_handle}
         igName={data.ig_name}
         ownerName={data.owner_name}
+        adjust={data.adjust.front}
       />
 
       <dl className="bg-white rounded-lg border divide-y">

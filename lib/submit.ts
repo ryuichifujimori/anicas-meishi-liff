@@ -1,6 +1,7 @@
 "use client";
 
 import { generateMeishiPrintPdf, type MeishiPrintInput } from "./print";
+import { usablePhotos } from "./photo-slots";
 import type { FormData, SubmitPayload } from "./types";
 
 /**
@@ -15,10 +16,13 @@ import type { FormData, SubmitPayload } from "./types";
 export function toPrintInput(form: FormData): MeishiPrintInput {
   return {
     composedPhoto: form.composedPhoto,
+    photos: usablePhotos(form.photos, form.petCount).map((p) => ({
+      aspect: p.width / p.height,
+    })),
     qr: form.qr,
     pets: form.pets,
     petCount: form.petCount,
-    nameSpread: form.nameSpread,
+    adjust: form.adjust.front,
     igHandle: form.ig_handle,
     igName: form.ig_name,
     ownerName: form.owner_name,
@@ -47,7 +51,7 @@ export async function buildSubmitPayload(
     })),
     photo_base64: form.composedPhoto,
     print_base64,
-    name_spread: form.nameSpread,
+    adjust: form.adjust,
     line_user_id: lineUserId,
   };
 }

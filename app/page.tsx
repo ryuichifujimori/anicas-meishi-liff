@@ -7,7 +7,8 @@ import { Step2PetInfo } from "./components/Step2PetInfo";
 import { Step3Account } from "./components/Step3Account";
 import { Step4Photos } from "./components/Step4Photos";
 import { Step5Confirm } from "./components/Step5Confirm";
-import type { FormData, Pet, PetPhoto, PhotoTransform } from "@/lib/types";
+import type { FormData, Pet, PetPhoto } from "@/lib/types";
+import { type FaceAdjust, untouchedCard } from "@/lib/card-adjust";
 import { closeLiffWindow, getLineUserId, initLiff } from "@/lib/liff";
 import { generateMeishiQr } from "@/lib/qr";
 import { buildSubmitPayload, postMeishiOrder } from "@/lib/submit";
@@ -15,15 +16,13 @@ import { buildSubmitPayload, postMeishiOrder } from "@/lib/submit";
 const TOTAL_STEPS = 5;
 
 const initialPet = (): Pet => ({ breed: "", name: "" });
-const initialTransform = (): PhotoTransform => ({ cx: 0.5, cy: 0.5, scale: 1 });
 
 const initialData: FormData = {
   petCount: 1,
   pets: [initialPet(), initialPet(), initialPet()],
   photos: [null, null, null],
-  transforms: [initialTransform(), initialTransform(), initialTransform()],
   composedPhoto: null,
-  nameSpread: 0, // the bar at rest: the card exactly as designed
+  adjust: untouchedCard(), // every part exactly where the design put it
   qr: null,
   ig_handle: "",
   ig_name: "",
@@ -68,12 +67,10 @@ export default function Page() {
   const setPets = (pets: Pet[]) => setData((d) => ({ ...d, pets }));
   const setPhotos = (photos: (PetPhoto | null)[]) =>
     setData((d) => ({ ...d, photos }));
-  const setTransforms = (transforms: PhotoTransform[]) =>
-    setData((d) => ({ ...d, transforms }));
   const setComposed = (composedPhoto: string) =>
     setData((d) => ({ ...d, composedPhoto }));
-  const setNameSpread = (nameSpread: number) =>
-    setData((d) => ({ ...d, nameSpread }));
+  const setFrontAdjust = (front: FaceAdjust) =>
+    setData((d) => ({ ...d, adjust: { ...d.adjust, front } }));
   const setAccount = (v: { ig_handle: string; ig_name: string; owner_name: string }) =>
     setData((d) => ({ ...d, ...v }));
 
@@ -167,17 +164,14 @@ export default function Page() {
             petCount={data.petCount}
             pets={data.pets}
             photos={data.photos}
-            transforms={data.transforms}
-            composedPhoto={data.composedPhoto}
-            nameSpread={data.nameSpread}
             qrSrc={data.qr?.png ?? null}
             igHandle={data.ig_handle}
             igName={data.ig_name}
             ownerName={data.owner_name}
+            adjust={data.adjust.front}
             onPhotosChange={setPhotos}
-            onTransformsChange={setTransforms}
             onComposed={setComposed}
-            onNameSpreadChange={setNameSpread}
+            onAdjustChange={setFrontAdjust}
             onNext={next}
             onBack={back}
           />

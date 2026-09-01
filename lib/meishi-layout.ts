@@ -11,6 +11,7 @@
  * print file. Do not restate any of these numbers in either renderer.
  */
 
+import { RIBBON_SPAN, RIBBON_TOP } from "./ribbon-profile";
 import type { Pet } from "./types";
 
 /* ------------------------------------------------------------------ *
@@ -54,6 +55,24 @@ export const TEMPLATE_PX = { width: 1046, height: 1738 } as const;
 /** CSS `aspect-ratio` value for the preview card box. */
 export const TEMPLATE_ASPECT = `${TEMPLATE_PX.width} / ${TEMPLATE_PX.height}`;
 
+/**
+ * The card's height as a multiple of its width.
+ *
+ * The layout states horizontal measurements as fractions of the card WIDTH and
+ * vertical ones as fractions of the card HEIGHT — exactly how CSS resolves an
+ * absolutely positioned child — while the type's own flow (font sizes, margins,
+ * line boxes) is measured in card widths throughout. These two turn one into
+ * the other, so a distance can be carried from one axis to the other without
+ * either renderer restating the ratio.
+ */
+export const CARD_ASPECT = TEMPLATE_PX.height / TEMPLATE_PX.width;
+
+/** A card-WIDTH fraction as the card-HEIGHT fraction covering the same distance. */
+export const wToH = (v: number) => v / CARD_ASPECT;
+
+/** A card-HEIGHT fraction as the card-WIDTH fraction covering the same distance. */
+export const hToW = (v: number) => v * CARD_ASPECT;
+
 export const ASSETS = {
   /**
    * The design itself. Both renderers place these exact files: the preview as
@@ -81,7 +100,7 @@ export const PAPER_COLOR = "#FFFFFF";
  *
  * Calibrated against the real reference card (public/sample-meishi.png,
  * 1070 × 1778). Measured landmarks (as a fraction of the card):
- *   photo slot              top .029, left .05, w .90, bottom .50 (overlaps ribbon)
+ *   photo slot              top .029, left .05, w .90, bottom .4924 (overlaps ribbon)
  *   ribbon white band       top .45, box bottom .536 (tails reach ~.575)
  *   breed / name / owner    y ≈ .61 / .66 / .71
  *   Instagram icon          x ≈ .06–.16, y ≈ .84–.90 (drawn in the template)
@@ -91,21 +110,147 @@ export const PAPER_COLOR = "#FFFFFF";
  *   anicas mark (bottom-R)  x ≈ .88–.91, y ≈ .93–.95
  *
  * Z-ORDER (critical): the photo extends DOWN past the ribbon band top so its
- * bottom sits at ~.50 (≈ middle of the white band), then the ribbon overlay
+ * bottom sits inside the white band, then the ribbon overlay
  * (/meishi-ribbon.png — the ribbon lifted off the template onto a transparent
  * background) is drawn ON TOP of the photo. This reproduces the real card,
  * where the ribbon's white band hides the photo's lower edge and the photo
  * peeks out around the band.
+ *
+ * The slot's BOTTOM is measured off the real card rather than rounded: the
+ * photo's lower edge has to land where the ribbon's tails begin, or it stops
+ * in the open just below them and leaves a square corner showing. Aligning
+ * public/sample-meishi.png to the template by the ribbon (its own outline is
+ * in both: x 56…990 ↔ 54…1009, y 785…1000 ↔ 800…1020, confirmed on the
+ * Instagram glyph to within a pixel) puts the real card's photo edge at
+ * sample row 872.5 — card height .49244, i.e. .4924 − .029 = .4634 of slot.
+ * The old .471 put it .68 mm lower, which is what showed.
+ *
+ * The slot's SIDES stay at the design's own .05 / .95. They are not what
+ * settles the photo's lower corners — `photoClip` is: the ribbon's ends are
+ * diagonal, so NO rectangle fits them (a wide slot pokes out past the tails, a
+ * narrow one leaves white between the two), and the photo is cut along the
+ * ribbon's own outline instead.
  *
  * `top`/`height` are fractions of the card HEIGHT; `left`/`right`/`width` are
  * fractions of the card WIDTH — exactly how CSS resolves them for an
  * absolutely positioned child, so the preview and the print file agree.
  */
 export const LAYOUT = {
-  photo: { top: 0.029, left: 0.05, width: 0.9, height: 0.471 },
+  photo: { top: 0.029, left: 0.05, width: 0.9, height: 0.4634 },
   textBlock: { top: 0.6, left: 0.1, width: 0.8 },
   igBlock: { top: 0.845, left: 0.18, width: 0.46 },
   qr: { top: 0.8, right: 0.075, width: 0.265 },
+} as const;
+
+/** A point on the card: `x` a fraction of its width, `y` a fraction of its
+ *  height — the same convention as everything else here. */
+export type CardPoint = readonly [number, number];
+
+/**
+ * THE WINDOW THE PHOTO IS DRAWN IN — the design's own slot, with the ribbon's
+ * upper outline for its lower edge.
+ *
+ * Three of its sides are the slot itself (`LAYOUT.photo`). The fourth cannot
+ * be a straight line: the ribbon's two ends are diagonal, so no rectangle fits
+ * them — widen one and its lower corners come out past the tails, narrow it
+ * and white opens up between the photo's edge and the tail that flares out
+ * beyond it. Both were tried. What fits the ribbon is the ribbon, so the lower
+ * edge is the artwork's own outline (`RIBBON_TOP`, traced by
+ * scripts/build-ribbon-profile.sh), carried a few rows PAST it so the photo
+ * runs on underneath and the ribbon's own antialiased edge blends into the
+ * photo rather than into the paper.
+ *
+ * The shape is FIXED ON THE CARD. Moving the photo or making it bigger moves
+ * and grows the picture BEHIND this window, never the window itself: whatever
+ * the talent does, not one pixel of the photo is drawn outside this outline.
+ *
+ * ONE definition, used by both renderers — the preview turns it into a CSS
+ * `polygon()`, the print file into a clipping path — so the two cannot cut the
+ * picture to different shapes.
+ */
+export const PHOTO_WINDOW = {
+  left: LAYOUT.photo.left,
+  right: LAYOUT.photo.left + LAYOUT.photo.width,
+  top: LAYOUT.photo.top,
+} as const;
+
+/** The outline's height at one point across the card, and at its own height
+ *  either side of it. Two points may share an `x` where the outline steps
+ *  straight up; the segment arriving there is the one that answers for it. */
+const ribbonTopAt = (x: number): number => {
+  const at = Math.min(Math.max(x, RIBBON_TOP[0][0]), RIBBON_TOP[RIBBON_TOP.length - 1][0]);
+  for (let i = 1; i < RIBBON_TOP.length; i++) {
+    const [ax, ay] = RIBBON_TOP[i - 1];
+    const [bx, by] = RIBBON_TOP[i];
+    if (bx > ax && at >= ax && at <= bx) return ay + ((by - ay) * (at - ax)) / (bx - ax);
+  }
+  return RIBBON_TOP[RIBBON_TOP.length - 1][1];
+};
+
+/**
+ * How far off the card the TOP is carried when it has nothing to cut. Big
+ * enough that it can never meet the picture: the picture is held inside the
+ * card, and the window's own top is well inside it.
+ */
+const CLIP_SLACK = 0.25;
+
+/**
+ * The window as a polygon, for a picture sitting at `picture`.
+ *
+ * The LEFT and RIGHT sides are the ribbon's own ends. Past them there is no
+ * ribbon at any height — the tips are the ribbon's leftmost and rightmost
+ * points at every row, and below a tip the tail turns back inwards — so a
+ * photo out there stands in the open whatever height it is cut at. The real
+ * card agrees: its picture runs 2.892…52.108 mm, which is the ribbon's own
+ * span, not the slot's rounded .05/.95.
+ *
+ * The TOP is the slot's, and it is carried off the card when the picture stops
+ * short of it: a clip edge laid exactly on the picture's own edge makes the
+ * renderer draw that edge twice, and the row of pixels along it comes out
+ * different. Untouched, the picture fills the slot's top edge to edge.
+ *
+ * The BOTTOM is the ribbon's own outline.
+ */
+export function photoClip(picture: {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}): CardPoint[] {
+  const left = Math.max(PHOTO_WINDOW.left, RIBBON_SPAN.left);
+  const right = Math.min(PHOTO_WINDOW.right, RIBBON_SPAN.right);
+  const top = picture.y < PHOTO_WINDOW.top ? PHOTO_WINDOW.top : PHOTO_WINDOW.top - CLIP_SLACK;
+
+  return [
+    [left, top],
+    [right, top],
+    [right, ribbonTopAt(right)],
+    ...[...RIBBON_TOP].reverse().filter(([x]) => x > left && x < right),
+    [left, ribbonTopAt(left)],
+  ];
+}
+
+/**
+ * The ribbon's white band, in card-height fractions — measured off
+ * /meishi-ribbon.png as the rows where the band runs unbroken from side to
+ * side (px 785 … 935 of 1738).
+ *
+ * It is the floor the photo's BOX is kept above. The photo's lower edge is
+ * meant to be hidden by this band — that is why the slot is allowed to reach
+ * down to .50, past the band's top.
+ *
+ * The overlay is ONE SOLID SILHOUETTE: measured off the file, every pixel of
+ * the ribbon — the caption box and both tails — is opaque white or black ink,
+ * with no partial alpha anywhere, so nothing behind it shows through. What it
+ * does NOT do is cover the card from side to side: its widest row spans
+ * px 56…991 of 1046 (row 850) and it narrows below that, while the photo slot
+ * is px 52…994. Its ends are diagonal too, which is why the photo is cut along
+ * the ribbon's own outline rather than at any straight line — see
+ * `photoClip` above.
+ */
+export const RIBBON_BAND = {
+  top: 785 / TEMPLATE_PX.height,
+  bottom: 936 / TEMPLATE_PX.height,
 } as const;
 
 /**
@@ -173,6 +318,46 @@ export type TypeSpec = (typeof TYPE)[keyof typeof TYPE];
 export type TypeWeight = (typeof TYPE)[keyof typeof TYPE]["weight"];
 
 /**
+ * The smallest each run may be set, in millimetres — the floor a run the
+ * talent is shrinking is stopped at, one per KIND of run rather than one for
+ * the card.
+ *
+ * A pet's column holds two runs of very different jobs. The name is what the
+ * card is for and is read across a desk, so it stops at 3.0 mm. The breed is a
+ * label under it and can go smaller — 1.8 mm, just under the 1.82 mm the
+ * design sets it at. Shrinking a column therefore parks the breed first and
+ * goes on taking the name down until it too bottoms out.
+ *
+ * Only a pet's own two runs carry a floor, because they are the only type on
+ * the card that can be resized: the owner line and the Instagram lines are set
+ * where and as the design sets them.
+ *
+ * A run the fitting rules have ALREADY pushed below its floor — a long breed
+ * squeezed to clear its neighbour — is never pushed back UP to it: it simply
+ * cannot be shrunk any further.
+ */
+const MIN_TYPE_MM = { name: 3.0, breed: 1.8 } as const;
+
+export const MIN_TYPE_SIZE = {
+  name: MIN_TYPE_MM.name / CARD_TRIM_MM.width,
+  breed: MIN_TYPE_MM.breed / CARD_TRIM_MM.width,
+} as const;
+
+/**
+ * How close a pet's column may come to the trimmed card's left and right
+ * edges, as a fraction of the card width.
+ *
+ * The card is cut out of a larger sheet and the cut wanders, so anything
+ * pushed flush to the trim line risks being shaved. 2 mm is the margin the
+ * design's own type already keeps, so nothing moves when this is applied to a
+ * card nobody has touched. The photo is exempt — it is artwork, and it is
+ * meant to run to the card's edge.
+ */
+const SAFE_MARGIN_MM = 2.0;
+
+export const SAFE_MARGIN = SAFE_MARGIN_MM / CARD_TRIM_MM.width;
+
+/**
  * Fonts embedded in the print PDF, one file per weight `TYPE` asks for.
  *
  * The card text goes into the PDF as text, not as pixels, so it needs a real
@@ -221,7 +406,14 @@ export type CardTextInput = {
  * separated from the name it belongs to. Every string is trimmed here, so
  * nothing but the pet's own letters reaches either renderer.
  */
-export function cardText(input: CardTextInput) {
+export type CardText = {
+  pets: { name: string; breed: string }[];
+  owner: string;
+  igName: string;
+  igHandle: string;
+};
+
+export function cardText(input: CardTextInput): CardText {
   const owner = input.ownerName.trim();
   const handle = input.igHandle.trim();
 
@@ -237,7 +429,7 @@ export function cardText(input: CardTextInput) {
 }
 
 /** Every character the card will set, for the font loader to size its subset. */
-export const cardGlyphs = (text: ReturnType<typeof cardText>) =>
+export const cardGlyphs = (text: CardText) =>
   text.pets.map((p) => p.name + p.breed).join("") +
   text.owner + text.igName + text.igHandle;
 
@@ -250,9 +442,10 @@ export const cardGlyphs = (text: ReturnType<typeof cardText>) =>
  * text block. Two, three, four pets — it is the same rule with a different
  * count; nothing here branches on how many there are.
  *
- * The bar in step 4 sets one number: how much to add to the gap between two
- * pets, as a fraction of the card width. Because the breed hangs on its name's
- * axis, moving the columns moves both lines by exactly the same amount.
+ * The columns sit one name em apart — the full-width space the line used to be
+ * joined with. Where the two lines then go on the card is not this module's to
+ * say: `lib/card-adjust.ts` moves and resizes each of them from what comes out
+ * of here.
  *
  * Neither line is ever allowed onto a second line or past the block's edges.
  * The names come down in size until they fit; the breeds come down until they
@@ -270,61 +463,15 @@ export type Measured = { advance: number; inkLeft: number; inkRight: number };
 
 export const EMPTY_MEASURE: Measured = { advance: 0, inkLeft: 0, inkRight: 0 };
 
-const inkWidth = (m: Measured) => m.inkRight - m.inkLeft;
+export const inkWidth = (m: Measured) => m.inkRight - m.inkLeft;
 const inkMid = (m: Measured) => (m.inkLeft + m.inkRight) / 2;
 
 /** Where the type block sits and how wide it is, in card fractions. */
 type Block = { left: number; width: number };
 
-export type SpreadLimits = { min: number; max: number };
-
-/** Keeps a stored bar value inside what the words currently typed allow. */
-export const clampSpread = (spread: number, limits: SpreadLimits) =>
-  Math.min(limits.max, Math.max(limits.min, spread || 0));
-
-/**
- * The bar's own position, −1 … +1, and the gap it stands for.
- *
- * The travel is not symmetric — a card can usually be opened up much further
- * than it can be closed — but the bar still has to rest in the middle when it
- * is untouched, so each half of it is mapped onto its own end of the travel.
- */
-export const spreadFromBar = (bar: number, limits: SpreadLimits) =>
-  bar < 0 ? -bar * limits.min : bar * limits.max;
-
-export const barFromSpread = (spread: number, limits: SpreadLimits) => {
-  if (spread < 0) return limits.min ? -spread / limits.min : 0;
-  return limits.max ? spread / limits.max : 0;
-};
-
 /** Gap between two columns: one name em — the full-width space the line used
- *  to be joined with — plus whatever the bar adds. */
-const columnGap = (spread: number) => Math.max(0, TYPE.name.size + spread);
-
-/**
- * How far the bar may travel for the words currently typed.
- *
- * `min` closes the gap to nothing: the names' boxes meet, which is as tight as
- * the card can be set. `max` is the point where the names reach the block's
- * edges — and never more than that, because past it the names would have to be
- * set smaller than they already are just to make room for the space between
- * them. On a card whose names already fill the block, `max` is 0 and the bar
- * only tightens.
- */
-export function spreadLimits(
-  names: Measured[],
-  block: Block = LAYOUT.textBlock,
-): SpreadLimits {
-  if (names.length < 2) return { min: 0, max: 0 };
-  const advance = names.reduce((total, m) => total + m.advance, 0);
-  if (!advance) return { min: 0, max: 0 };
-
-  const gaps = names.length - 1;
-  const design = TYPE.name.size;
-  const atRest = Math.min(design, (block.width - gaps * design) / advance);
-  const widest = (block.width - advance * atRest) / gaps;
-  return { min: -design, max: Math.max(0, widest - design) };
-}
+ *  to be joined with. */
+const COLUMN_GAP = TYPE.name.size;
 
 /** Where every pet's words go: one axis each, and the size the two lines end
  *  up at once they have been made to fit. */
@@ -338,7 +485,7 @@ export type PetLayout = {
 /**
  * Lays the columns out.
  *
- * The names are set as one line — measured widths, the bar's gap between them,
+ * The names are set as one line — measured widths, one name em between them,
  * the whole thing centred in the block on its INK rather than on its advance
  * box — and each pet's axis is then wherever its own name's ink centre landed.
  * That is exactly what a single centred line has always done, so a card with
@@ -357,13 +504,12 @@ export type PetLayout = {
 export function layoutPets(
   names: Measured[],
   breeds: Measured[],
-  spread: number,
   block: Block = LAYOUT.textBlock,
 ): PetLayout {
   const n = names.length;
   if (!n) return { axes: [], nameSize: TYPE.name.size, breedSize: TYPE.breed.size };
 
-  const gap = columnGap(spread);
+  const gap = COLUMN_GAP;
   const advance = names.reduce((total, m) => total + m.advance, 0);
   const room = Math.max(0, block.width - (n - 1) * gap);
   const nameSize = advance
@@ -433,6 +579,67 @@ export const inkCentred = (m: Measured, axis: number, size: number) =>
  * leaves two lines on visibly different axes.
  */
 export const inkOffset = (m: Measured) => m.advance / 2 - inkMid(m);
+
+/* ------------------------------------------------------------------ *
+ * Line breaking
+ * ------------------------------------------------------------------ *
+ *
+ * The owner line and the two Instagram lines are flowed rather than placed,
+ * so a long one has to be broken somewhere — and both renderers have to break
+ * it in the same place. The rules live here and each renderer supplies its own
+ * width function, measured in the font it is actually setting.
+ */
+
+const CJK =
+  /[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]/;
+
+/**
+ * Splits text at the points a browser is allowed to break a line with the
+ * default `word-break: normal`: after a space, and between two characters when
+ * either of them is CJK.
+ */
+function segments(text: string): string[] {
+  const chars = Array.from(text);
+  const out: string[] = [];
+  let buf = "";
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i];
+    if (buf && (CJK.test(ch) || CJK.test(chars[i - 1]))) {
+      out.push(buf);
+      buf = "";
+    }
+    buf += ch;
+    if (ch === " ") {
+      out.push(buf);
+      buf = "";
+    }
+  }
+  if (buf) out.push(buf);
+  return out;
+}
+
+/** Greedy line breaking. A single unbreakable chunk wider than the box
+ *  overflows rather than being split, matching `overflow-wrap: normal`. */
+export function wrapText(
+  width: (text: string) => number,
+  text: string,
+  maxWidth: number,
+): string[] {
+  const parts = segments(text);
+  const lines: string[] = [];
+  let line = "";
+  for (const part of parts) {
+    const candidate = line + part;
+    if (line && width(candidate.trimEnd()) > maxWidth) {
+      lines.push(line.trimEnd());
+      line = part.trimStart();
+    } else {
+      line = candidate;
+    }
+  }
+  if (line.trimEnd()) lines.push(line.trimEnd());
+  return lines.length ? lines : [text];
+}
 
 /* ------------------------------------------------------------------ *
  * Unit helpers (so neither renderer restates a number)

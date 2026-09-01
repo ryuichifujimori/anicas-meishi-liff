@@ -1,13 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import {
-  EMPTY_MEASURE,
-  type Measured,
-  type SpreadLimits,
-  TYPE,
-  spreadLimits,
-} from "./meishi-layout";
+import { useCallback, useEffect, useState } from "react";
+import type { MeasureRun } from "./card-adjust";
+import { EMPTY_MEASURE, type Measured, type TypeSpec } from "./meishi-layout";
 
 /**
  * Measuring the card's type in the browser.
@@ -75,24 +70,17 @@ export function useCardFont(): string {
 }
 
 /**
- * How far the spacing bar may travel for the words currently typed. Both the
- * bar and the preview read it, so the bar's stops and what the card does at
- * them cannot disagree.
+ * One string as the browser will set it, ready for `lib/card-adjust.ts` — the
+ * same question `lib/print.ts` asks of the font it embeds, so both renderers
+ * are laid out by the same code from measurements each took itself.
+ *
+ * It returns nothing measurable until the page has told us which font it is
+ * actually using, which is the one frame the preview renders empty of type.
  */
-export function useSpreadLimits(names: string[], family: string): SpreadLimits {
-  const key = JSON.stringify([family, names]);
-  const [limits, setLimits] = useState<SpreadLimits>({ min: 0, max: 0 });
-
-  useEffect(() => {
-    if (!family) return;
-    setLimits(
-      spreadLimits(
-        names.map((name) => measureText(name, TYPE.name.weight, family)),
-      ),
-    );
-    // `key` carries every string the answer depends on.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
-
-  return limits;
+export function useMeasureRun(): MeasureRun {
+  const family = useCardFont();
+  return useCallback(
+    (spec: TypeSpec, text: string) => measureText(text, spec.weight, family),
+    [family],
+  );
 }

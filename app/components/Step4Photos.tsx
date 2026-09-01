@@ -1,34 +1,25 @@
 "use client";
 
 import { useRef, useState } from "react";
-import type { Pet, PetPhoto, PhotoTransform } from "@/lib/types";
+import type { Pet, PetPhoto } from "@/lib/types";
 import { loadAndNormalizeImage } from "@/lib/image";
-import {
-  barFromSpread,
-  cardText,
-  clampSpread,
-  spreadFromBar,
-} from "@/lib/meishi-layout";
-import { useCardFont, useSpreadLimits } from "@/lib/card-metrics";
-import { PhotoComposer } from "./PhotoComposer";
+import { type FaceAdjust, TEXT_RANGE, untouchedFace } from "@/lib/card-adjust";
+import { usablePhotos } from "@/lib/photo-slots";
 import { MeishiPreview } from "./MeishiPreview";
 
 type Props = {
   petCount: 1 | 2 | 3;
   pets: Pet[];
   photos: (PetPhoto | null)[];
-  transforms: PhotoTransform[];
-  composedPhoto: string | null;
-  /** The name-spacing bar's value. 0 is the card as designed. */
-  nameSpread: number;
   qrSrc: string | null;
   igHandle: string;
   igName: string;
   ownerName: string;
+  /** Where the talent has put the card's five movable parts. */
+  adjust: FaceAdjust;
   onPhotosChange: (photos: (PetPhoto | null)[]) => void;
-  onTransformsChange: (t: PhotoTransform[]) => void;
   onComposed: (dataUrl: string) => void;
-  onNameSpreadChange: (spread: number) => void;
+  onAdjustChange: (adjust: FaceAdjust) => void;
   onNext: () => void;
   onBack: () => void;
 };
@@ -37,35 +28,20 @@ export function Step4Photos({
   petCount,
   pets,
   photos,
-  transforms,
-  composedPhoto,
-  nameSpread,
   qrSrc,
   igHandle,
   igName,
   ownerName,
+  adjust,
   onPhotosChange,
-  onTransformsChange,
   onComposed,
-  onNameSpreadChange,
+  onAdjustChange,
   onNext,
   onBack,
 }: Props) {
   const [loadingIdx, setLoadingIdx] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileInputs = useRef<Array<HTMLInputElement | null>>([]);
-
-  // The bar's stops are not a fixed distance: they come from the width of the
-  // names the talent actually typed, measured in the font the card is set in.
-  // Left, the columns close up; right, the names reach the card's margin.
-  // Short names therefore open much further than long ones.
-  const family = useCardFont();
-  const text = cardText({ pets, petCount, ownerName, igName, igHandle });
-  const spreadLimits = useSpreadLimits(
-    text.pets.map((pet) => pet.name),
-    family,
-  );
-  const spreadRange = spreadLimits.max - spreadLimits.min;
 
   const handleFile = async (idx: number, file: File | undefined) => {
     if (!file) return;
@@ -84,11 +60,7 @@ export function Step4Photos({
     }
   };
 
-  const validPhotos = photos
-    .slice(0, petCount)
-    .filter((p): p is PetPhoto => p !== null);
-  const photoCount = validPhotos.length;
-  const hasAny = photoCount >= 1;
+  const hasAny = usablePhotos(photos, petCount).length >= 1;
 
   return (
     <div className="space-y-5">
@@ -135,60 +107,49 @@ export function Step4Photos({
 
       {hasAny && (
         <div className="space-y-2">
-          <h3 className="font-semibold text-sm">写真の編集</h3>
-          <PhotoComposer
-            photos={validPhotos}
-            transforms={transforms.slice(0, photoCount)}
-            onTransformsChange={(t) => {
-              const next = transforms.slice();
-              t.forEach((v, i) => (next[i] = v));
-              onTransformsChange(next);
-            }}
-            onComposed={onComposed}
-          />
-
-          {/* How far apart the pets sit. Nothing to space out with a single
-              pet, so the bar only exists from two upwards. It rides in the
-              same block as the zoom bar above rather than opening a section
-              of its own — both are the same kind of nudge to the artwork. */}
-          {petCount > 1 && (
-            <div className="space-y-2">
-              <label className="block text-sm font-medium" htmlFor="name-spread">
-                名前の間隔
-              </label>
-              <input
-                id="name-spread"
-                type="range"
-                min={-1}
-                max={1}
-                step={0.01}
-                value={barFromSpread(clampSpread(nameSpread, spreadLimits), spreadLimits)}
-                disabled={spreadRange <= 0}
-                onChange={(e) =>
-                  onNameSpreadChange(
-                    spreadFromBar(parseFloat(e.target.value), spreadLimits),
-                  )
-                }
-                className="w-full accent-[#2D6A4F] disabled:opacity-50"
-              />
-            </div>
-          )}
-        </div>
-      )}
-
-      {hasAny && (
-        <div className="space-y-2">
           <h3 className="font-semibold text-sm">名刺プレビュー</h3>
+          {/* The card is laid out here, on the card itself: touch a part to
+              pick it up, one finger to move it, two to size a picture. The
+              pictures are framed here too — there is no second screen above
+              this one any more, because the card IS the frame. */}
           <MeishiPreview
-            composedPhoto={composedPhoto}
-            nameSpread={nameSpread}
+            photos={photos}
             qrSrc={qrSrc}
             pets={pets}
             petCount={petCount}
             igHandle={igHandle}
             igName={igName}
             ownerName={ownerName}
+            adjust={adjust}
+            onAdjustChange={onAdjustChange}
+            onComposed={onComposed}
           />
+          {/* The size of the pets' type, for the whole card at once. Set here
+              rather than by dragging a column's corner, because what a card of
+              three pets is judged on is the three names being the SAME size —
+              which two hands on two corners can only approximate. A column
+              that cannot fit at this size is the one that comes down. */}
+          <label htmlFor="text-size" className="block font-semibold text-sm">
+            文字の大きさ
+          </label>
+          <input
+            id="text-size"
+            type="range"
+            min={TEXT_RANGE.min}
+            max={TEXT_RANGE.max}
+            step={TEXT_RANGE.step}
+            value={adjust.text}
+            onChange={(e) => onAdjustChange({ ...adjust, text: Number(e.target.value) })}
+            className="w-full"
+          />
+
+          <button
+            type="button"
+            onClick={() => onAdjustChange(untouchedFace())}
+            className="w-full py-2 rounded-lg border border-gray-300 bg-white text-gray-700 text-sm font-semibold"
+          >
+            最初に戻す
+          </button>
         </div>
       )}
 

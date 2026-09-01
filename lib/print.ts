@@ -7,28 +7,27 @@ import {
   ASSETS,
   BLEED_MM,
   CARD_TRIM_MM,
-  LAYOUT,
-  LINE_HEIGHT,
   PAGE_MM,
   PAPER_COLOR,
+  photoClip,
   PRINT_DPI,
   PRINT_FALLBACK_FONT,
   PRINT_FONTS,
   TEMPLATE_PX,
-  TYPE,
   type Measured,
-  type TypeSpec,
   type TypeWeight,
   EMPTY_MEASURE,
   cardGlyphs,
   cardText,
-  clampSpread,
-  inkCentred,
-  inkOffset,
-  layoutPets,
   mmToPt,
-  spreadLimits,
 } from "./meishi-layout";
+import {
+  type CardRect,
+  type FaceAdjust,
+  type PlacedRun,
+  type ResolvedCard,
+  resolveCard,
+} from "./card-adjust";
 
 /**
  * Print-ready artwork for the meishi.
@@ -55,17 +54,18 @@ import {
  */
 
 export type MeishiPrintInput = {
-  /** Composed pet photo (data URL) — what `MeishiPreview` shows in the slot. */
+  /** Composed pet photo (data URL) — the same canvas `MeishiPreview` draws. */
   composedPhoto: string | null;
+  /** The shapes of the pictures that went into it. Nothing here is redrawn
+   *  from them — the composed picture arrives finished — but the layout is
+   *  worked out from the same input in both renderers. */
+  photos: { aspect: number }[];
   /** Styled QR and its overlay geometry, from `lib/qr.ts`. */
   qr: MeishiQr | null;
   pets: Pet[];
   petCount: 1 | 2 | 3;
-  /**
-   * The step-4 bar: how much to add to the gap between two pets, as a fraction
-   * of the card width. 0 is the card as designed.
-   */
-  nameSpread: number;
+  /** Where the talent dragged and resized the card's five movable parts. */
+  adjust: FaceAdjust;
   igHandle: string;
   igName: string;
   ownerName: string;
@@ -117,7 +117,6 @@ export async function generateMeishiPrintPdf(
   const pageH = mmToPt(PAGE_MM.height);
   const page = pdf.addPage([pageW, pageH]);
   const card = cardBox();
-  const slot = box(card, LAYOUT.photo);
   const text = cardText(input);
 
   // Paper white over the whole sheet, bleed included: the template's ground is
@@ -131,15 +130,27 @@ export async function generateMeishiPrintPdf(
     color: ink(lib, PAPER_COLOR),
   });
 
-  const [template, ribbon, photo, logo, fonts] = await Promise.all([
+  const [template, ribbon, logo, fonts] = await Promise.all([
     embedArtwork(pdf, ASSETS.template),
     embedArtwork(pdf, ASSETS.ribbon),
-    input.composedPhoto
-      ? embedPhoto(pdf, input.composedPhoto, slot, options)
-      : null,
     input.qr ? embedArtwork(pdf, ASSETS.logo) : null,
     loadFonts(pdf, cardGlyphs(text)),
   ]);
+
+  // Where everything goes — the design, and then what the talent did to it —
+  // worked out by the same function `MeishiPreview` lays the screen out with,
+  // against the font THIS renderer is going to set the words in.
+  const placed = resolveCard({
+    text,
+    measure: (spec, value) => measureRun(fonts[spec.weight], value),
+    adjust: input.adjust,
+    photos: input.photos,
+  });
+
+  const slot = place(card, placed.photo);
+  const photo = input.composedPhoto
+    ? await embedPhoto(pdf, input.composedPhoto, slot, options)
+    : null;
 
   // Same paint order as MeishiPreview: template → photo → ribbon → text → QR.
   const placeCard = (art: PDFImage) =>
@@ -153,80 +164,47 @@ export async function generateMeishiPrintPdf(
   placeCard(template);
 
   if (photo) {
+    // The picture is cut to the design's own window — the same shape the
+    // preview cuts it with, the ribbon's outline for its lower edge — as a
+    // clipping path rather than by cropping the bitmap, so the pixels that do
+    // land are the pixels that always landed. The window does not travel with
+    // the picture: however far it is dragged or how big it is made, nothing
+    // reaches the page outside this shape.
+    const corner = ([x, y]: readonly [number, number]) => ({
+      x: card.x + x * card.width,
+      y: pageH - card.top - y * card.height,
+    });
+    const path = photoClip(placed.photo).map(corner);
+    page.pushOperators(
+      lib.pushGraphicsState(),
+      lib.moveTo(path[0].x, path[0].y),
+      ...path.slice(1).map((p) => lib.lineTo(p.x, p.y)),
+      lib.closePath(),
+      lib.clip(),
+      lib.endPath(),
+    );
     page.drawImage(photo, {
       x: slot.x,
       y: pageH - slot.top - slot.height,
       width: slot.width,
       height: slot.height,
     });
+    page.pushOperators(lib.popGraphicsState());
   }
 
   // The ribbon's white band goes IN FRONT of the photo and hides its lower
   // edge — the reason the photo slot is allowed to run past the band's top.
   placeCard(ribbon);
 
-  // The columns are worked out here against the font going into the PDF, by
-  // the same functions the preview runs against the font on screen. A bar
-  // value saved when the names were shorter is brought back inside range
-  // rather than pushing the type out of its block.
-  const measured = (weight: TypeSpec, value: string) =>
-    measureRun(fonts[weight.weight], value);
-  const names = text.pets.map((pet) => measured(TYPE.name, pet.name));
-  const breeds = text.pets.map((pet) => measured(TYPE.breed, pet.breed));
-  const columns = layoutPets(
-    names,
-    breeds,
-    clampSpread(input.nameSpread, spreadLimits(names)),
-  );
-  const column = (
-    measures: Measured[],
-    size: number,
-    value: (pet: (typeof text.pets)[number]) => string,
-  ) => ({
-    size,
-    items: text.pets.map((pet, i) => ({
-      text: value(pet),
-      x: inkCentred(measures[i], columns.axes[i], size),
-    })),
-  });
-
-  drawRuns(page, {
-    block: box(card, LAYOUT.textBlock),
-    align: "center",
-    cardX: card.x,
-    cardWidth: card.width,
-    pageHeight: pageH,
-    fonts,
-    lib,
-    runs: [
-      {
-        spec: TYPE.breed,
-        columns: column(breeds, columns.breedSize, (pet) => pet.breed),
-      },
-      {
-        spec: TYPE.name,
-        columns: column(names, columns.nameSize, (pet) => pet.name),
-      },
-      { spec: TYPE.owner, text: text.owner },
-    ],
-  });
-
-  drawRuns(page, {
-    block: box(card, LAYOUT.igBlock),
-    align: "left",
-    cardWidth: card.width,
-    pageHeight: pageH,
-    cardX: card.x,
-    fonts,
-    lib,
-    runs: [
-      { spec: TYPE.igName, text: text.igName },
-      { spec: TYPE.igHandle, text: text.igHandle },
-    ],
-  });
+  // The Instagram glyph beside the line is the template's own, drawn into
+  // /meishi-template.png. The line no longer moves, so there is nothing to
+  // paint out and nothing to place again.
+  for (const run of [placed.breed, placed.name, placed.owner, ...placed.ig.runs]) {
+    drawRun(page, { run, card, pageHeight: pageH, fonts, lib });
+  }
 
   if (input.qr && logo) {
-    drawQr(page, input.qr, logo, card, pageH, lib);
+    drawQr(page, input.qr, logo, place(card, placed.qr), pageH, lib);
   }
 
   // Where the sheet is cut down to the finished card, and how far the artwork
@@ -280,19 +258,16 @@ function cardBox(): Box {
 }
 
 /**
- * Resolves a layout rectangle against the card box the way CSS resolves an
- * absolutely positioned child: `top`/`height` against the card height,
- * `left`/`width` against the card width.
+ * Resolves a placed rectangle against the card box the way CSS resolves an
+ * absolutely positioned child: `y`/`height` against the card height,
+ * `x`/`width` against the card width.
  */
-function box(
-  card: Box,
-  rect: { top: number; left: number; width: number; height?: number },
-): Box {
+function place(card: Box, rect: CardRect): Box {
   return {
-    x: card.x + rect.left * card.width,
-    top: card.top + rect.top * card.height,
+    x: card.x + rect.x * card.width,
+    top: card.top + rect.y * card.height,
     width: rect.width * card.width,
-    height: (rect.height ?? 0) * card.height,
+    height: rect.height * card.height,
   };
 }
 
@@ -376,17 +351,13 @@ function drawQr(
   page: PDFPage,
   qr: MeishiQr,
   logo: PDFImage,
-  card: Box,
+  at: Box,
   pageHeight: number,
   lib: PdfLib,
 ) {
-  const side = LAYOUT.qr.width * card.width; // square
-  const scale = side / qr.size;
+  const scale = at.width / qr.size; // the QR box is square
   // Page position of the QR's own (0, 0), i.e. its top-left corner.
-  const origin = {
-    x: card.x + card.width * (1 - LAYOUT.qr.right) - side,
-    y: pageHeight - (card.top + LAYOUT.qr.top * card.height),
-  };
+  const origin = { x: at.x, y: pageHeight - at.top };
 
   const shapes = parseQrShapes(qr.svg);
   // A QR that silently came out blank would be printed as a blank QR.
@@ -616,78 +587,52 @@ function measureRun(font: FontSet, text: string): Measured {
 }
 
 /**
- * One line of the card's type: either a single string flowed in the block, or
- * one item per pet, each already placed on its own column's axis.
- */
-type Run = {
-  spec: TypeSpec;
-  text?: string;
-  columns?: { size: number; items: { text: string; x: number }[] };
-};
-
-/**
- * Lays a stack of lines down the block the way the browser lays out the
- * preview's block children: each gets its `marginTop`, then one line box of
- * `LINE_HEIGHT × the design font size` per (wrapped) line, with the glyphs'
- * content area centred in that box via half-leading. An empty line is skipped
- * entirely, so an absent breed or owner closes its gap exactly as on screen.
+ * Puts one run of type down.
  *
- * The line box is always the DESIGN size even when the glyphs have been set
- * smaller to fit, so shrinking one line never shifts the ones below it.
+ * `lib/card-adjust.ts` has already decided every line's string, its left edge,
+ * the top of its line box and the size it is set at, so there is no flowing,
+ * centring or breaking left to do here — only the one thing a PDF needs that
+ * CSS does for free: finding the baseline inside the line box. CSS centres the
+ * font's content area (ascent + descent) in that box and hangs the glyphs off
+ * its top, and that is what this reproduces.
+ *
+ * The baseline comes from the RUN's own size, not from each line's, so a pet
+ * whose column the talent set larger or smaller still sits on the very same
+ * baseline as the pets beside it — which is what the preview's line box does
+ * on screen.
  */
-function drawRuns(
+function drawRun(
   page: PDFPage,
   opts: {
-    block: Box;
-    align: "left" | "center";
-    /** Left edge of the card artwork on the page, which the columns' own
-     *  coordinates are measured from. */
-    cardX: number;
-    cardWidth: number;
+    run: PlacedRun;
+    card: Box;
     pageHeight: number;
     fonts: Fonts;
     lib: PdfLib;
-    runs: Run[];
   },
 ) {
-  let top = opts.block.top;
+  const { run, card } = opts;
+  if (!run.lines.length) return;
 
-  for (const run of opts.runs) {
-    const items = run.columns?.items.filter((item) => item.text) ?? [];
-    if (!run.text && !items.length) continue;
+  const font = opts.fonts[run.spec.weight];
+  const colour = ink(opts.lib, run.spec.color);
+  // Sizes and line boxes are fractions of the card WIDTH, positions down the
+  // card are fractions of its HEIGHT — as everywhere else on the card.
+  const struck = run.size * card.width;
+  const lineBox = run.lineBox * card.width;
+  const halfLeading = (lineBox - font.primary.pdf.heightAtSize(struck)) / 2;
+  const baseline = halfLeading + font.primary.pdf.heightAtSize(struck, { descender: false });
 
-    const font = opts.fonts[run.spec.weight];
-    const colour = ink(opts.lib, run.spec.color);
-    const size = (run.columns?.size ?? run.spec.size) * opts.cardWidth;
-    const lineBox = LINE_HEIGHT * run.spec.size * opts.cardWidth;
-    // CSS centres the font's content area (ascent + descent) in the line box
-    // and hangs the glyphs off its top.
-    const halfLeading = (lineBox - font.primary.pdf.heightAtSize(size)) / 2;
-    const baseline =
-      halfLeading + font.primary.pdf.heightAtSize(size, { descender: false });
-
-    top += run.spec.marginTop * opts.cardWidth;
-    const y = opts.pageHeight - (top + baseline);
-
-    if (run.columns) {
-      for (const item of items) {
-        draw(page, font, item.text, opts.cardX + item.x * opts.cardWidth, y, size, colour);
-      }
-      top += lineBox;
-      continue;
-    }
-
-    const width = (text: string) => measure(font, text, size);
-    for (const line of wrapText(width, run.text ?? "", opts.block.width)) {
-      const x =
-        opts.align === "center"
-          ? opts.block.x +
-            (opts.block.width - width(line)) / 2 +
-            inkOffset(measureRun(font, line)) * size
-          : opts.block.x;
-      draw(page, font, line, x, opts.pageHeight - (top + baseline), size, colour);
-      top += lineBox;
-    }
+  for (const line of run.lines) {
+    draw(
+      page,
+      font,
+      line.text,
+      card.x + line.x * card.width,
+      opts.pageHeight - (card.top + line.top * card.height + baseline),
+      line.size * card.width,
+      colour,
+    );
   }
 }
 
@@ -724,64 +669,6 @@ function splitByFont(font: FontSet, line: string): { font: Face; text: string }[
     else pieces.push({ font: chosen, text: ch });
   }
   return pieces;
-}
-
-function measure(font: FontSet, text: string, size: number): number {
-  return splitByFont(font, text).reduce(
-    (total, piece) => total + piece.font.pdf.widthOfTextAtSize(piece.text, size),
-    0,
-  );
-}
-
-const CJK =
-  /[　-〿぀-ゟ゠-ヿ㐀-䶿一-鿿豈-﫿＀-￯]/;
-
-/**
- * Splits text at the points a browser is allowed to break a line with the
- * default `word-break: normal`: after a space, and between two characters when
- * either of them is CJK.
- */
-function segments(text: string): string[] {
-  const chars = Array.from(text);
-  const out: string[] = [];
-  let buf = "";
-  for (let i = 0; i < chars.length; i++) {
-    const ch = chars[i];
-    if (buf && (CJK.test(ch) || CJK.test(chars[i - 1]))) {
-      out.push(buf);
-      buf = "";
-    }
-    buf += ch;
-    if (ch === " ") {
-      out.push(buf);
-      buf = "";
-    }
-  }
-  if (buf) out.push(buf);
-  return out;
-}
-
-/** Greedy line breaking. A single unbreakable chunk wider than the box
- *  overflows rather than being split, matching `overflow-wrap: normal`. */
-function wrapText(
-  width: (text: string) => number,
-  text: string,
-  maxWidth: number,
-): string[] {
-  const parts = segments(text);
-  const lines: string[] = [];
-  let line = "";
-  for (const part of parts) {
-    const candidate = line + part;
-    if (line && width(candidate.trimEnd()) > maxWidth) {
-      lines.push(line.trimEnd());
-      line = part.trimStart();
-    } else {
-      line = candidate;
-    }
-  }
-  if (line.trimEnd()) lines.push(line.trimEnd());
-  return lines.length ? lines : [text];
 }
 
 /* ------------------------------------------------------------------ *
