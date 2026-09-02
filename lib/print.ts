@@ -1,6 +1,12 @@
 "use client";
 
-import type { PDFDocument, PDFFont, PDFImage, PDFPage } from "pdf-lib";
+import type {
+  PDFDocument,
+  PDFEmbeddedPage,
+  PDFFont,
+  PDFImage,
+  PDFPage,
+} from "pdf-lib";
 import type { MeishiQr } from "./qr";
 import type { Pet } from "./types";
 import {
@@ -28,6 +34,7 @@ import {
   type ResolvedCard,
   resolveCard,
 } from "./card-adjust";
+import { VECTOR_ART, type VectorArt } from "./vector-art";
 
 /**
  * Print-ready artwork for the meishi.
@@ -36,17 +43,24 @@ import {
  * `lib/meishi-layout.ts` definition, onto a 61 × 97 mm page (55 × 91 mm card
  * + 3 mm bleed) — but as a real PDF rather than as one flattened raster:
  *
- *   template / ribbon  the design's own PNGs, embedded whole (≈483 dpi there)
+ *   ribbon / caption   the designer's own paths (see lib/vector-art.ts)
+ *   template           the design's own PNG, embedded whole (≈483 dpi there)
  *   text               live text in an embedded font, selectable and searchable
  *   QR                 the module shapes drawn as paths
  *   anicas mark        the 500 × 500 master, embedded whole and scaled down
  *   photo              resampled to 350 dpi
  *
  * The talent's own words are the part that has to stay sharp at any size, and
- * they are the part that is type. The drawn design is left as the pixels it
- * was drawn as: tracing it into outlines put a staircase along every curve of
- * the paw prints, the Instagram glyph and the ribbon's caption, because a
- * trace can only follow the pixel grid it is given.
+ * they are the part that is type.
+ *
+ * The drawn design is going the same way, a piece at a time, but only from the
+ * ORIGINAL. Auto-tracing the PNGs was tried and taken out again: a trace can
+ * only follow the pixel grid it is given, so it put a staircase along every
+ * curve of the paw prints, the Instagram glyph and the ribbon's caption —
+ * worse than the artwork it replaced. What goes in as line work goes in from
+ * Illustrator, and lib/vector-art.ts holds those pieces and measures each one
+ * onto the very pixels it replaces. The ribbon and its caption are the first;
+ * whatever is not on that list is still the pixels it was drawn as.
  *
  * This module is deliberately standalone: it takes plain data, touches no
  * React state and is not tied to the submit button, so the same call can be
@@ -132,7 +146,7 @@ export async function generateMeishiPrintPdf(
 
   const [template, ribbon, logo, fonts] = await Promise.all([
     embedArtwork(pdf, ASSETS.template),
-    embedArtwork(pdf, ASSETS.ribbon),
+    embedVector(pdf, lib, VECTOR_ART.ribbon),
     input.qr ? embedArtwork(pdf, ASSETS.logo) : null,
     loadFonts(pdf, cardGlyphs(text)),
   ]);
@@ -162,6 +176,15 @@ export async function generateMeishiPrintPdf(
     });
 
   placeCard(template);
+
+  // The template carries the ribbon baked into it, and the line work that
+  // replaces it lands within a pixel of those pixels — near enough that an
+  // edge of them shows alongside, which would put back the very staircase the
+  // line work is here to take away. So the ribbon's box is wiped back to paper
+  // before anything else goes over it: the template has nothing else inside it
+  // (scripts/build-vector-art.sh checks that), and what is drawn next — the
+  // photo, then the ribbon itself — covers all of it that should not be paper.
+  clearForVector(page, ribbon, card, pageH, lib);
 
   if (photo) {
     // The picture is cut to the design's own window — the same shape the
@@ -194,7 +217,10 @@ export async function generateMeishiPrintPdf(
 
   // The ribbon's white band goes IN FRONT of the photo and hides its lower
   // edge — the reason the photo slot is allowed to run past the band's top.
-  placeCard(ribbon);
+  // It is the one part of the design that is line work rather than pixels, and
+  // it covers the photo the same way either way: the band and both tails are
+  // solid, with nothing behind them showing through.
+  drawVector(page, ribbon, card, pageH, lib);
 
   // The Instagram glyph beside the line is the template's own, drawn into
   // /meishi-template.png. The line no longer moves, so there is nothing to
@@ -291,6 +317,90 @@ async function fetchBytes(url: string): Promise<Uint8Array> {
  */
 async function embedArtwork(pdf: PDFDocument, url: string): Promise<PDFImage> {
   return pdf.embedPng(await fetchBytes(url));
+}
+
+/** A piece of line work, embedded, with the measurements that place it. */
+type Vector = { page: PDFEmbeddedPage; art: VectorArt };
+
+/**
+ * A piece of the design that goes in as LINE WORK — the designer's own paths,
+ * carried across whole rather than turned into anything.
+ *
+ * The file arrives as a one-page PDF off the original artboard, and its page
+ * becomes a form XObject in this one: the same fills, the same strokes, the
+ * same outlined lettering, at whatever size the card asks for. Nothing is
+ * traced, resampled or re-drawn, so there is no pixel grid left to enlarge.
+ */
+async function embedVector(
+  pdf: PDFDocument,
+  lib: PdfLib,
+  art: VectorArt,
+): Promise<Vector> {
+  const source = await lib.PDFDocument.load(await fetchBytes(art.url));
+  const page = source.getPage(0);
+
+  // Illustrator leaves its own working copy of the drawing on the page — a
+  // private editing record and a preview thumbnail, 164 kB of it — and
+  // whatever the page holds is carried across with it. The print file wants
+  // the drawing, not the drawing program's notes about it.
+  for (const note of ["PieceInfo", "Thumb", "LastModified"]) {
+    page.node.delete(lib.PDFName.of(note));
+  }
+
+  const [embedded] = await pdf.embedPages([page]);
+  return { page: embedded, art };
+}
+
+/**
+ * Wipes back to paper the piece of the template that carries this part already,
+ * so the line work is the only copy of it on the page.
+ *
+ * Laid down straight after the template and BEFORE the photo, which is what
+ * makes it safe: it can only ever take away template, never anything drawn on
+ * top of it.
+ */
+function clearForVector(
+  page: PDFPage,
+  vector: Vector,
+  card: Box,
+  pageHeight: number,
+  lib: PdfLib,
+) {
+  const at = place(card, vector.art.clear);
+  page.drawRectangle({
+    x: at.x,
+    y: pageHeight - at.top - at.height,
+    width: at.width,
+    height: at.height,
+    color: ink(lib, PAPER_COLOR),
+  });
+}
+
+/**
+ * Puts one of those pieces on the card, where `lib/vector-art.ts` measured it
+ * onto the pixels it replaces.
+ *
+ * The line width is set first. Some of the artwork's strokes state no width of
+ * their own, which means PDF's default of one unit — so the width in force
+ * when the piece is drawn has to BE that default, whatever the page happened
+ * to be drawing with beforehand.
+ */
+function drawVector(
+  page: PDFPage,
+  vector: Vector,
+  card: Box,
+  pageHeight: number,
+  lib: PdfLib,
+) {
+  const at = place(card, vector.art.page);
+  page.pushOperators(lib.pushGraphicsState(), lib.setLineWidth(1));
+  page.drawPage(vector.page, {
+    x: at.x,
+    y: pageHeight - at.top - at.height,
+    width: at.width,
+    height: at.height,
+  });
+  page.pushOperators(lib.popGraphicsState());
 }
 
 /**
