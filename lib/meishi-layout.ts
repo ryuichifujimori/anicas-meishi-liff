@@ -46,9 +46,14 @@ export const mmToPt = (mm: number) => (mm * 72) / MM_PER_INCH;
 /**
  * Intrinsic size of /meishi-template.png and /meishi-ribbon.png.
  *
- * These are also what goes into the print PDF. Across the 55 mm card that is
- * 1046 / (55 / 25.4) ≈ 483 dpi — comfortably above the 350 dpi the printer
- * asks for, so the design needs no vector stand-in to print cleanly.
+ * The template is also what goes into the print PDF. Across the 55 mm card
+ * that is 1046 / (55 / 25.4) ≈ 483 dpi — well above the 350 dpi the printer
+ * asks for, and enough that nothing shows at reading size; a proof enlarged
+ * far past it is where the pixel grid starts to tell, which is what
+ * `lib/vector-art.ts` is working through, piece by piece.
+ *
+ * It is also the grid the whole layout is calibrated on, so it stays the card's
+ * measure whether a given part of the design goes in as pixels or as paths.
  */
 export const TEMPLATE_PX = { width: 1046, height: 1738 } as const;
 
@@ -75,8 +80,9 @@ export const hToW = (v: number) => v * CARD_ASPECT;
 
 export const ASSETS = {
   /**
-   * The design itself. Both renderers place these exact files: the preview as
-   * `<img>`, the print PDF as an embedded PNG at its native pixel size.
+   * The design itself, as pictures. The preview places these exact files as
+   * `<img>`, and so does the print PDF — embedded whole, at their native pixel
+   * size — for every part of the design that has no line work of its own yet.
    *
    * They are deliberately NOT traced into outlines on the way to the PDF. An
    * auto-trace of a bitmap follows the pixel grid, so the paw prints, the
@@ -84,6 +90,11 @@ export const ASSETS = {
    * staircase along every curve — worse than the artwork it replaced. The
    * original pixels, placed at ≈483 dpi (see TEMPLATE_PX), carry the design's
    * own antialiasing instead.
+   *
+   * Where the ORIGINAL line work exists it goes into the print file instead of
+   * the picture, and the picture stays on screen: see `lib/vector-art.ts`,
+   * which holds those pieces and where each lands. `ribbon` is one of them —
+   * the preview still shows this PNG, the print file draws the paths.
    */
   template: "/meishi-template.png",
   ribbon: "/meishi-ribbon.png",
