@@ -136,13 +136,26 @@ export default function Page() {
             press-and-hold, so there is no button to save it with — and
             nothing is laid over it that would take that press away. */}
         {cardImage && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={cardImage}
-            alt="完成した名刺"
-            data-card-image=""
-            className="mt-6 w-full max-w-[280px] rounded shadow-sm"
-          />
+          <div className="relative mt-6 w-full max-w-[280px]">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={cardImage}
+              alt="完成した名刺"
+              data-card-image=""
+              className="block w-full rounded shadow-sm"
+            />
+            {/* The one line that says the press-and-hold is there — the card
+                itself gives no sign of it. It hangs off the bottom of the
+                card rather than sitting under it in the flow: this screen is
+                centred vertically, so a line of ordinary text below the card
+                would push the card up. Out of the flow, the card stays where
+                it was to the pixel. It is set small and grey, like the other
+                hints in the form, so the card is still the thing being
+                looked at. */}
+            <p className="absolute inset-x-0 top-full mt-2 text-xs text-gray-500">
+              長押しで保存できます
+            </p>
+          </div>
         )}
       </main>
     );
