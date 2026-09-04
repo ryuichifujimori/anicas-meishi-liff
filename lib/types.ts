@@ -17,8 +17,9 @@ export type FormData = {
   pets: Pet[];
   photos: (PetPhoto | null)[];
   // The pets' pictures composed onto one transparent canvas, one per share of
-  // the card's photo window. Made by the preview itself, and what both the
-  // print file and the payload are built from.
+  // the card's photo window. Made by the preview itself, and what the print
+  // file is drawn from — it goes into the card at 350 dpi and does not travel
+  // as a field of its own.
   composedPhoto: string | null;
   // Where the talent has dragged and resized the five movable parts of the
   // card, one entry per face. Untouched, every part is at the design's own
@@ -35,13 +36,11 @@ export type SubmitPayload = {
   ig_name: string;
   owner_name: string;
   pets: Pet[];
-  // Composed pet photo. Kept so a card can be remade or reordered from the
-  // original artwork rather than from the flattened print file.
-  photo_base64: string;
   // Print-ready PDF (data URL): 61 x 97 mm page = 55 x 91 mm card + 3 mm
   // bleed. The talent's own words are live text in an embedded font and the QR
-  // is drawn as paths; the design's artwork and the photo are images. The QR is
-  // part of it, which is why the form no longer sends a separate qr_base64.
+  // is drawn as paths; the design's artwork and the photo are images. The QR
+  // and the photo are both inside it at print resolution, which is why the
+  // form sends neither a qr_base64 nor a photo_base64 of its own.
   print_base64: string;
   // The talent's own placement of the card's five movable parts, as one object
   // keyed by face — so a card remade from this payload comes back laid out the

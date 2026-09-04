@@ -139,8 +139,8 @@ payload には入れておらず、GAS に送るものをこの絵から作っ�
   傾きも最初から読んでいるので、回転を足すときは `onMove` の1行で済む。ペットの列に
   ピンチは付いていない（大きさは「文字の大きさ」）。
 - **写真の編集画面は無い。** 絵の合成（透明な地に区画ごとに cover-fit）は
-  `lib/photo-slots.ts` にあり、名刺プレビューがその canvas を直接カードに描く。入稿PDFと
-  payload に渡すデータURLは、指が止まってから作る。区画の値は `FaceAdjust.photos` に
+  `lib/photo-slots.ts` にあり、名刺プレビューがその canvas を直接カードに描く。入稿PDFに
+  渡すデータURLは、指が止まってから作る。区画の値は `FaceAdjust.photos` に
   区画ごとの配列で持つので、写真の入れ替えは元の絵が替わるだけで済む。
 - 横に動かしているあいだだけ、**中央や等間隔の位置でぴたっと止まり**、
   なぜ止まったかを示す印が出る。指を離すと消える。
@@ -271,6 +271,8 @@ payload には入れておらず、GAS に送るものをこの絵から作っ�
 - `docs/print-quality-verification.md` … 絵柄の輪郭・中心・間隔バー・ロゴ径
 - `docs/print-vector-verification.md` … 文字の実テキスト化と QR のパス化
 - `docs/print-pdf-verification.md` … PDF 生成そのものを入れたとき
+- `docs/photo-payload-verification.md` … 写真を単体で送るのをやめたとき
+  （送信時間・入稿PDFの画素一致・画面の画素一致）
 
 ## GAS への送信ペイロード
 
@@ -280,7 +282,6 @@ payload には入れておらず、GAS に送るものをこの絵から作っ�
   "ig_name": "YUKO",
   "owner_name": "金野祐子",
   "pets": [{ "breed": "ポメラニアン", "name": "コテツ" }],
-  "photo_base64": "data:image/png;base64,...",
   "print_base64": "data:application/pdf;base64,...",
   "adjust": {
     "front": {
@@ -293,7 +294,6 @@ payload には入れておらず、GAS に送るものをこの絵から作っ�
 }
 ```
 
-- `photo_base64` … 合成済みのペット写真。作り直し・増刷のときに原本が要るので残す。
 - `print_base64` … 印刷用 PDF（data URL）。`{ig_handle}_print.pdf` として保存する。
 - `adjust` … タレントがプレビューの上で動かした位置と大きさ。面ごと（いまは
   `front` のみ）に、写真は `dx`／`dy`（カード幅・高さに対する割合）と `scale`
@@ -305,14 +305,20 @@ payload には入れておらず、GAS に送るものをこの絵から作っ�
   **`ig` と `qr` も廃止**（Instagram の行と QR は動かせなくなった）。
 - `qr_base64` は **廃止**。QR は `print_base64` の中に描かれているため、
   単体で送る必要がなくなった。
+- `photo_base64` も **廃止**。写真は `print_base64` の中に 350dpi で入っており、
+  GAS 側もすでに保存をやめている（受け取っても捨てていた）。送るものの中で
+  いちばん大きかったのがこれで、外した分だけ送信が短くなる
+  （`docs/photo-payload-verification.md` に実測）。
 
 > **GAS WebApp 側の変更が必要**（本リポジトリには GAS ソースは含まれない）:
 > 1. `doPost` で `print_base64` を取り出し、既存の base64→Drive 保存処理を流用して
 >    `{ig_handle}_print.pdf` を保存する（MIME は `application/pdf`）。
 > 2. `qr_base64` を受け取って `{ig_handle}_qr.png` を保存していた処理を削除する。
 >    （旧来の QuickChart による QR 生成もすでに不要）
-> 3. 既存の Drive フォルダ ID・スプレッドシート追記ロジックはそのまま流用。
-> 4. **デプロイ→デプロイを管理→新バージョン** で再デプロイする（コード push だけでは
+> 3. `photo_base64` を読む処理が残っていれば削除する。保存はすでにやめているので、
+>    読まなくなるだけで挙動は変わらない。
+> 4. 既存の Drive フォルダ ID・スプレッドシート追記ロジックはそのまま流用。
+> 5. **デプロイ→デプロイを管理→新バージョン** で再デプロイする（コード push だけでは
 >    本番反映されない）。WebApp URL は変更しない。
 
 GAS は CORS ヘッダを返さないため、`fetch` は `mode: "no-cors"` で送信している
