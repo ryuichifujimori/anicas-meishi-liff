@@ -51,14 +51,3 @@ export function getLineUserId(): string | null {
     return null;
   }
 }
-
-export function closeLiffWindow() {
-  if (!liffInstance) return;
-  try {
-    if (liffInstance.isInClient()) {
-      liffInstance.closeWindow();
-    }
-  } catch (e) {
-    console.warn("[liff] closeWindow failed", e);
-  }
-}

@@ -56,12 +56,36 @@ export function Step5Confirm({ data, submitting, error, onSubmit, onBack }: Prop
           type="button"
           onClick={onSubmit}
           disabled={submitting}
-          className="flex-1 py-3 rounded-lg bg-[#2D6A4F] text-white font-semibold disabled:opacity-50"
+          className="flex-1 py-3 rounded-lg bg-[#2D6A4F] text-white font-semibold disabled:opacity-50 inline-flex items-center justify-center gap-2"
         >
+          {submitting && <Turning />}
           {submitting ? "送信中…" : "送信する"}
         </button>
       </div>
     </div>
+  );
+}
+
+/**
+ * The mark that turns while the order is being sent.
+ *
+ * Sending is not a wait for the network — most of it is the print-ready PDF
+ * being drawn right here, on this phone, which takes the main thread for
+ * seconds at a time. A mark moved by JavaScript would stop dead in the middle
+ * of exactly the moment it exists for, so this one is a CSS `transform`
+ * animation: the browser runs it on the compositor, and it keeps turning
+ * while the page itself cannot answer.
+ *
+ * It says one thing — that something is happening — and it says it without a
+ * word, so nothing new is added for the talent to read.
+ */
+function Turning() {
+  return (
+    <span
+      aria-hidden
+      data-turning=""
+      className="w-4 h-4 rounded-full border-2 border-white/40 border-t-white animate-spin"
+    />
   );
 }
 
