@@ -9,9 +9,10 @@ import { Step4Photos } from "./components/Step4Photos";
 import { Step5Confirm } from "./components/Step5Confirm";
 import type { FormData, Pet, PetPhoto } from "@/lib/types";
 import { type FaceAdjust, untouchedCard } from "@/lib/card-adjust";
-import { closeLiffWindow, getLineUserId, initLiff } from "@/lib/liff";
+import { getLineUserId, initLiff } from "@/lib/liff";
+import { generateMeishiCardImage } from "@/lib/card-image";
 import { generateMeishiQr } from "@/lib/qr";
-import { buildSubmitPayload, postMeishiOrder } from "@/lib/submit";
+import { buildSubmitPayload, postMeishiOrder, toPrintInput } from "@/lib/submit";
 
 const TOTAL_STEPS = 5;
 
@@ -36,6 +37,10 @@ export default function Page() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
+  // The finished card as one picture, for the talent to look at and to press
+  // and hold. Drawn once the order is away and shown, nothing else: it is not
+  // in the payload and nothing sent to GAS is built from it.
+  const [cardImage, setCardImage] = useState<string | null>(null);
 
   useEffect(() => {
     initLiff().then(() => {
@@ -94,12 +99,18 @@ export default function Page() {
     try {
       // Rendering the print-ready PDF lives in lib/submit + lib/print, not in
       // this handler, so the same two calls can be made from a payment
-      // completion handler later. The existing "送信中…" state covers the
-      // extra second the render takes; nothing new is shown to the talent.
+      // completion handler later. It is the slow part of sending, and what
+      // says so on screen is the turning mark on the button in Step5Confirm.
       const payload = await buildSubmitPayload(data, lineUserId);
       await postMeishiOrder(gasUrl, payload);
+      // The order has gone. The picture of the card is for the talent to keep,
+      // so failing to draw one must not turn a sent order into an error.
+      try {
+        setCardImage(await generateMeishiCardImage(toPrintInput(data)));
+      } catch (e) {
+        console.error("card image failed", e);
+      }
       setSubmitted(true);
-      setTimeout(() => closeLiffWindow(), 1500);
     } catch (e) {
       console.error(e);
       setSubmitError("送信に失敗しました。電波の良い場所で再度お試しください。");
@@ -108,6 +119,8 @@ export default function Page() {
     }
   };
 
+  // Nothing closes this screen but the talent: the order is away, and the card
+  // they just made is on it to look at and to keep.
   if (submitted) {
     return (
       <main className="mx-auto w-full max-w-[480px] min-h-screen p-6 flex flex-col items-center justify-center text-center">
@@ -118,6 +131,19 @@ export default function Page() {
         <p className="text-sm text-gray-600">
           ご注文ありがとうございます。確認次第、ご連絡いたします。
         </p>
+        {/* The finished card, as a picture of itself. A plain <img> carrying
+            its own image data is what a phone offers to save on a
+            press-and-hold, so there is no button to save it with — and
+            nothing is laid over it that would take that press away. */}
+        {cardImage && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={cardImage}
+            alt="完成した名刺"
+            data-card-image=""
+            className="mt-6 w-full max-w-[280px] rounded shadow-sm"
+          />
+        )}
       </main>
     );
   }
