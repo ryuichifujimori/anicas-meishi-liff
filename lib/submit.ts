@@ -32,6 +32,12 @@ export function toPrintInput(form: FormData): MeishiPrintInput {
 /**
  * Builds the GAS payload, generating the print-ready PDF along the way.
  * Throws if the photo is missing, since there is nothing to print without it.
+ *
+ * The composed photo goes into the PDF and nowhere else. It used to ride along
+ * as `photo_base64` too, which made every order carry the same picture twice —
+ * once at 350 dpi inside the card, once whole — and GAS stopped saving the
+ * loose copy. It was the largest thing in the post, so the post is now a
+ * fraction of what it was and the talent waits that much less.
  */
 export async function buildSubmitPayload(
   form: FormData,
@@ -49,7 +55,6 @@ export async function buildSubmitPayload(
       breed: p.breed.trim(),
       name: p.name.trim(),
     })),
-    photo_base64: form.composedPhoto,
     print_base64,
     adjust: form.adjust,
     line_user_id: lineUserId,
